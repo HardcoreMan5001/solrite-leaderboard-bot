@@ -141,61 +141,46 @@ client.on("messageCreate", async (msg) => {
     }
 
     // !setsale @user
-if (command === "setsale") {
-  if (!canSetSale(msg.member)) {
-    return msg.reply("❌ You don’t have permission to use `!setsale`.");
+  if (command === "setsale") {
+  const target = msg.mentions.users.first();
+  if (!target) {
+    return msg.reply("Usage: `!setsale @user`");
   }
 
-  const mentioned = msg.mentions.users.first();
-  if (!mentioned) return msg.reply("Usage: `!setsale @user`");
+  const setter = msg.author;
+  const isSelfGen = target.id === setter.id;
 
-  const guildId = msg.guild.id;
-  const authorId = msg.author.id;
-  const mentionedId = mentioned.id;
+  await run(db, `INSERT OR IGNORE INTO sales (user_id, self_gen, set_sales) VALUES (?, 0, 0)`, [setter.id]);
+  await run(db, `INSERT OR IGNORE INTO sales (user_id, self_gen, set_sales) VALUES (?, 0, 0)`, [target.id]);
 
-  // SELF-GEN: mentioning yourself counts as ONE sale total
-  if (mentionedId === authorId) {
-    await incrementCounter(guildId, authorId, "sales_total", 1);
-    await incrementCounter(guildId, authorId, "sales_selfgen", 1);
-    return msg.reply(`✅ Sale recorded for ${msg.member.displayName}. (Self-gen)`);
+  if (isSelfGen) {
+    await run(db, `UPDATE sales SET self_gen = self_gen + 1 WHERE user_id = ?`, [setter.id]);
+    return msg.reply(`✅ Sale recorded for ${setter.username} (Self-gen)`);
+  } else {
+    await run(db, `UPDATE sales SET set_sales = set_sales + 1 WHERE user_id = ?`, [setter.id]);
+    await run(db, `UPDATE sales SET set_sales = set_sales + 1 WHERE user_id = ?`, [target.id]);
+    return msg.reply(`✅ Sale recorded. Credited: ${setter.username} + ${target.username}`);
   }
-
-  // SET: two different people, both get ONE sale + ONE set
-  await incrementCounter(guildId, authorId, "sales_total", 1);
-  await incrementCounter(guildId, mentionedId, "sales_total", 1);
-
-  await incrementCounter(guildId, authorId, "sales_set", 1);
-  await incrementCounter(guildId, mentionedId, "sales_set", 1);
-
-  const mentionedMember =
-    msg.guild.members.cache.get(mentionedId) ||
-    (await msg.guild.members.fetch(mentionedId).catch(() => null));
-  const mentionedName = mentionedMember?.displayName || mentioned.username;
-
-  return msg.reply(`✅ Sale recorded. Credited: ${msg.member.displayName} + ${mentionedName}`);
 }
 
-    // !clearsales
-    if (command === "clearsales") {
-      if (!isLeadership(msg.member)) {
-        return msg.reply("❌ Only Leadership can use `!clearsales`.");
-      }
+// !clearsales
+if (command === "clearsales") {
+  if (!isLeadership(msg.member)) {
+    return msg.reply("❌ Only Leadership can use `!clearsales`.");
+  }
 
-      await clearKeyForGuild(msg.guild.id, "sales_total");
-      await clearKeyForGuild(msg.guild.id, "sales_selfgen");
-      await clearKeyForGuild(msg.guild.id, "sales_set");
+  await run(db, `DELETE FROM sales`);
+  return msg.reply("🧹 Sales leaderboard cleared.");
+}
 
-      return msg.reply("🧹 Sales leaderboard cleared.");
-    }
-
-    // !cleargym
-    if (command === "cleargym") {
-      if (!isLeadership(msg.member)) {
-        return msg.reply("❌ Only Leadership can use `!cleargym`.");
-      }
-      await clearKeyForGuild(msg.guild.id, "gym");
-      return msg.reply("🧹 Gym leaderboard cleared.");
-    }
+// !cleargym
+if (command === "cleargym") {
+  if (!isLeadership(msg.member)) {
+    return msg.reply("❌ Only Leadership can use `!cleargym`.");
+  }
+  await clearKeyForGuild(msg.guild.id, "gym");
+  return msg.reply("🧹 Gym leaderboard cleared.");
+}
     // !leaderboard (sales)
     if (command === "leaderboard") {
       const rows = await getLeaderboardSales(msg.guild.id);
