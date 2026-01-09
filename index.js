@@ -1,9 +1,14 @@
 const { Client, GatewayIntentBits } = require("discord.js");
 const sqlite3 = require("sqlite3").verbose();
+const express = require("express");
 
 const PREFIX = "!";
 const LEADERSHIP_ROLE_NAMES = ["Leadership"];
 const CLOSER_ROLE_NAMES = ["Closer"];
+const app = express();
+app.get("/", (req, res) => res.send("OK"));
+app.get("/health", (req, res) => res.send("OK"));
+app.listen(process.env.PORT || 3000, () => console.log("Web server ready"));
 
 const client = new Client({
   intents: [
