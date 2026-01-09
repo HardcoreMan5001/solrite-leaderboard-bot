@@ -1,9 +1,3 @@
-const express = require("express");
-
-const app = express();
-app.get("/", (req, res) => res.send("OK"));
-app.get("/health", (req, res) => res.send("OK"));
-app.listen(process.env.PORT || 3000, () => console.log("Web server ready"));
 
 const { Client, GatewayIntentBits } = require("discord.js");
 const sqlite3 = require("sqlite3").verbose();
