@@ -2,6 +2,8 @@
 const { Client, GatewayIntentBits } = require("discord.js");
 const sqlite3 = require("sqlite3").verbose();
 
+const PREFIX = "!";
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
