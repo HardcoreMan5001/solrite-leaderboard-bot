@@ -543,6 +543,20 @@ function parseNonNegativeInt(s) {
 }
 
 // ===== MESSAGE HANDLER =====
+
+// ===== MESSAGE DEDUPE HELPERS =====
+async function claimMessage(messageId) {
+  try {
+    await run(
+      `INSERT INTO processed_messages (message_id, created_at)
+       VALUES (?, ?)`,
+      [messageId, new Date().toISOString()]
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
 client.on("messageCreate", async (msg) => {
   try {
     if (!msg.guild) return;
