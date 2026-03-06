@@ -633,7 +633,7 @@ Last Updated: ${ctNow()} CT
 
 async function buildLiveSalesBoard(guild) {
 
-  const rows = await salesRows(guild.id);
+  const rows = await getSalesRows(guild.id);
 
   if (!rows.length) {
     return "**Sales Leaderboard**\n(No sales recorded yet.)";
