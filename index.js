@@ -1,4 +1,4 @@
-krequire("dotenv").config();
+require("dotenv").config();
 const { Client, GatewayIntentBits, PermissionsBitField } = require("discord.js");
 const sqlite3 = require("sqlite3").verbose();
 
