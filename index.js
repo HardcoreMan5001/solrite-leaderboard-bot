@@ -337,7 +337,7 @@ async function opponentSalesRows(guildId) {
 }
 
 async function buildSalesLeaderboard(guild) {
-  const rows = await salesRows(guild.id);
+  const rows = await getSalesRows(guild.id);
   if (!rows.length) return "**Sales Leaderboard**\n(No sales recorded yet.)";
 
   const lines = [];
