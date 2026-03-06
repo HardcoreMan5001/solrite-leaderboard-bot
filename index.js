@@ -316,7 +316,7 @@ async function recordOpponentSelfGen(guildId, userId) {
   );
 }
 
-async function salesRows(guildId) {
+async function getSalesRows(guildId) {
   return await all(
     `SELECT user_id, total_sales, self_gen, set_sales
      FROM sales
@@ -589,7 +589,7 @@ let compApptsMessageId = null;
 async function buildLiveScoreboard(guild) {
 
   const apptsRows = await dailyApptsRows(guild.id, ctDateKey());
-  const salesRows = await salesRows(guild.id);
+  const salesRows = await getSalesRows(guild.id);
 
   const goal = await getGoal(guild.id);
   const apptTotal = await todayApptTotal(guild.id);
