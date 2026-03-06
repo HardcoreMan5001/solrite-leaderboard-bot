@@ -760,6 +760,71 @@ if (command === "compappts") {
 
   return msg.reply(output.slice(0, 1900));
 }
+// ===================== COMP OVERALL =====================
+if (command === "comp") {
+  const dateKey = ctDateKey();
+
+  const ourSalesRows = await all(
+    `SELECT total_sales
+     FROM sales
+     WHERE guild_id = ?`,
+    [guildId]
+  );
+
+  const opSalesRows = await all(
+    `SELECT total_sales
+     FROM op_sales
+     WHERE guild_id = ?`,
+    [guildId]
+  );
+
+  const ourApptRows = await all(
+    `SELECT count
+     FROM daily_appts
+     WHERE guild_id = ? AND date_key = ?`,
+    [guildId, dateKey]
+  );
+
+  const opApptRows = await all(
+    `SELECT count
+     FROM op_daily_appts
+     WHERE guild_id = ? AND date_key = ?`,
+    [guildId, dateKey]
+  );
+
+  const ourSalesTotal = ourSalesRows.reduce((sum, r) => sum + (r.total_sales || 0), 0);
+  const opSalesTotal = opSalesRows.reduce((sum, r) => sum + (r.total_sales || 0), 0);
+
+  const ourApptsTotal = ourApptRows.reduce((sum, r) => sum + (r.count || 0), 0);
+  const opApptsTotal = opApptRows.reduce((sum, r) => sum + (r.count || 0), 0);
+
+  const ourTotal = ourSalesTotal + ourApptsTotal;
+  const opTotal = opSalesTotal + opApptsTotal;
+
+  let winnerLine = "🤝 It is currently tied.";
+
+  if (ourTotal > opTotal) {
+    winnerLine = `🏆 Solrite is winning by ${ourTotal - opTotal}`;
+  } else if (opTotal > ourTotal) {
+    winnerLine = `🏆 Opponent is winning by ${opTotal - ourTotal}`;
+  }
+
+  const output = `🔥 **Blitz Score**
+
+**Solrite**
+Sales: ${ourSalesTotal}
+Appts: ${ourApptsTotal}
+Total: ${ourTotal}
+
+**Opponent**
+Sales: ${opSalesTotal}
+Appts: ${opApptsTotal}
+Total: ${opTotal}
+
+${winnerLine}`;
+
+  return msg.reply(output);
+}
 
     // ===================== GYM =====================
     // !gym
