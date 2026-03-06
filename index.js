@@ -5,35 +5,73 @@ const sqlite3 = require("sqlite3").verbose();
 /* ================= CONFIG ================= */
 
 const PREFIX = "!";
+
 const TIMEZONE = "America/Chicago";
 
+/* CHANNEL IDS */
+
 const CHANNELS = {
-  LIVE_SCOREBOARD: "1479273397698564179",
-  SALES: "1458250404835098795",
-  APPOINTMENTS: "1458250231354495150",
-  COMP_SALES: "1479295628528844921",
-  COMP_APPTS: "1479308152951410768",
-  GENERAL_CHAT: "1458248543000068228"
+
+LIVE_SCOREBOARD: "1479273397698564179",
+
+SALES: "1458250404835098795",
+
+APPOINTMENTS: "1458250231354495150",
+
+COMP_SALES: "1479295628528844921",
+
+COMP_APPTS: "1479308152951410768",
+
+GENERAL_CHAT: "1458248543000068228"
+
 };
 
+/* ROLE IDS */
+
 const ROLES = {
-  ADMIN: "1458245454482640966",
-  LEADERSHIP: "1458245230598946940",
-  CLOSER: "1458245812827062342",
-  OPPONENT: "1479314578642042964"
+
+LEADERSHIP: "1458245230598946940",
+
+ADMIN: "1458245454482640966",
+
+REP: "1458245642026750178",
+
+CLOSER: "1458245812827062342",
+
+BOT: "1458969879406444751",
+
+RECRUIT: "1479313032961064970",
+
+OPPONENT: "1479314578642042964"
+
 };
 
 const TOKEN = process.env.DISCORD_TOKEN;
+
+if (!TOKEN) {
+
+console.error("Missing DISCORD_TOKEN");
+
+process.exit(1);
+
+}
+
 const DB_PATH = process.env.DB_PATH || "./bot.db";
 
 /* ================= DISCORD ================= */
 
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
+
+intents: [
+
+GatewayIntentBits.Guilds,
+
+GatewayIntentBits.GuildMessages,
+
+GatewayIntentBits.MessageContent
+
+]
+
 });
 
 /* ================= DATABASE ================= */
@@ -41,559 +79,885 @@ const client = new Client({
 const db = new sqlite3.Database(DB_PATH);
 
 function run(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
-      if (err) reject(err);
-      else resolve(this);
-    });
-  });
+
+return new Promise((resolve, reject) => {
+
+db.run(sql, params, function (err) {
+
+if (err) reject(err);
+
+else resolve(this);
+
+});
+
+});
+
 }
 
 function get(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
-      if (err) reject(err);
-      else resolve(row);
-    });
-  });
+
+return new Promise((resolve, reject) => {
+
+db.get(sql, params, (err, row) => {
+
+if (err) reject(err);
+
+else resolve(row);
+
+});
+
+});
+
 }
 
 function all(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
-      if (err) reject(err);
-      else resolve(rows);
-    });
-  });
+
+return new Promise((resolve, reject) => {
+
+db.all(sql, params, (err, rows) => {
+
+if (err) reject(err);
+
+else resolve(rows);
+
+});
+
+});
+
 }
 
-/* ================= TIME ================= */
+/* ================= TIME HELPERS ================= */
 
-function ctNow() {
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone: TIMEZONE,
-    hour: "numeric",
-    minute: "2-digit"
-  }).format(new Date());
+function ctDateKey(date = new Date()) {
+
+return new Intl.DateTimeFormat("en-CA", {
+
+timeZone: TIMEZONE,
+
+year: "numeric",
+
+month: "2-digit",
+
+day: "2-digit"
+
+}).format(date);
+
 }
 
-function ctDateKey() {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: TIMEZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  }).format(new Date());
+function ctTimeLabel(date = new Date()) {
+
+return new Intl.DateTimeFormat("en-US", {
+
+timeZone: TIMEZONE,
+
+hour: "numeric",
+
+minute: "2-digit"
+
+}).format(date);
+
 }
 
 /* ================= PERMISSIONS ================= */
 
 function hasRole(member, roleId) {
-  if (!member) return false;
-  return member.roles.cache.has(roleId);
-}
 
-function isAdmin(member) {
-  return hasRole(member, ROLES.ADMIN);
+return !!member?.roles?.cache?.has(roleId);
+
 }
 
 function isLeadership(member) {
-  return hasRole(member, ROLES.LEADERSHIP) || isAdmin(member);
+
+return hasRole(member, ROLES.LEADERSHIP);
+
+}
+
+function isAdmin(member) {
+
+return hasRole(member, ROLES.ADMIN);
+
 }
 
 function canClose(member) {
-  return hasRole(member, ROLES.CLOSER) || isLeadership(member);
+
+return isLeadership(member) || hasRole(member, ROLES.CLOSER);
+
 }
 
-function canOpponent(member) {
-  return (
-    hasRole(member, ROLES.OPPONENT) ||
-    isLeadership(member) ||
-    isAdmin(member)
-  );
+function canUseOpponent(member) {
+
+return (
+
+isLeadership(member) ||
+
+isAdmin(member) ||
+
+hasRole(member, ROLES.OPPONENT)
+
+);
+
+}
+
+function canUseCompetition(member) {
+
+return (
+
+isLeadership(member) ||
+
+hasRole(member, ROLES.OPPONENT)
+
+);
+
 }
 
 function deny(msg) {
-  return msg.reply("You do not have role permissions to use this command.");
+
+return msg.reply("You do not have role permissions to use this command");
+
 }
 
-/* ================= DB INIT ================= */
+/* ================= DISPLAY NAME ================= */
+
+async function displayNameFor(guild, userId) {
+
+try {
+
+const member = await guild.members.fetch(userId);
+
+return member.displayName || member.user.username;
+
+} catch {
+
+return `<@${userId}>`;
+
+}
+
+}
+
+/* ================= INIT DB ================= */
 
 async function initDb() {
 
-  await run(`
-  CREATE TABLE IF NOT EXISTS sales(
-    guild_id TEXT,
-    user_id TEXT,
-    total_sales INTEGER DEFAULT 0,
-    self_gen INTEGER DEFAULT 0,
-    set_sales INTEGER DEFAULT 0,
-    PRIMARY KEY(guild_id,user_id)
-  )`);
+/* SALES */
 
-  await run(`
-  CREATE TABLE IF NOT EXISTS opponent_sales(
-    guild_id TEXT,
-    user_id TEXT,
-    total_sales INTEGER DEFAULT 0,
-    self_gen INTEGER DEFAULT 0,
-    set_sales INTEGER DEFAULT 0,
-    PRIMARY KEY(guild_id,user_id)
-  )`);
+await run(`
 
-  await run(`
-  CREATE TABLE IF NOT EXISTS daily_appts(
-    guild_id TEXT,
-    date_key TEXT,
-    user_id TEXT,
-    count INTEGER DEFAULT 0,
-    PRIMARY KEY(guild_id,date_key,user_id)
-  )`);
+CREATE TABLE IF NOT EXISTS sales (
 
-  await run(`
-  CREATE TABLE IF NOT EXISTS opponent_appts(
-    guild_id TEXT,
-    date_key TEXT,
-    user_id TEXT,
-    count INTEGER DEFAULT 0,
-    PRIMARY KEY(guild_id,date_key,user_id)
-  )`);
+guild_id TEXT,
 
-  await run(`
-  CREATE TABLE IF NOT EXISTS gym(
-    guild_id TEXT,
-    user_id TEXT,
-    checkins INTEGER DEFAULT 0,
-    PRIMARY KEY(guild_id,user_id)
-  )`);
+user_id TEXT,
 
-  await run(`
-  CREATE TABLE IF NOT EXISTS boards(
-    name TEXT PRIMARY KEY,
-    message_id TEXT
-  )`);
+total_sales INTEGER DEFAULT 0,
 
-  await run(`
-  CREATE TABLE IF NOT EXISTS settings(
-    key TEXT PRIMARY KEY,
-    value TEXT
-  )`);
-}
+self_gen INTEGER DEFAULT 0,
 
-/* ================= DISPLAY ================= */
+set_sales INTEGER DEFAULT 0,
 
-async function displayName(guild, id) {
-  try {
-    const m = await guild.members.fetch(id);
-    return m.displayName;
-  } catch {
-    return `<@${id}>`;
-  }
+PRIMARY KEY(guild_id,user_id)
+
+)
+
+`);
+
+/* OPPONENT SALES */
+
+await run(`
+
+CREATE TABLE IF NOT EXISTS opponent_sales (
+
+guild_id TEXT,
+
+user_id TEXT,
+
+total_sales INTEGER DEFAULT 0,
+
+self_gen INTEGER DEFAULT 0,
+
+set_sales INTEGER DEFAULT 0,
+
+PRIMARY KEY(guild_id,user_id)
+
+)
+
+`);
+
+/* DAILY APPOINTMENTS */
+
+await run(`
+
+CREATE TABLE IF NOT EXISTS daily_appts (
+
+guild_id TEXT,
+
+date_key TEXT,
+
+user_id TEXT,
+
+count INTEGER DEFAULT 0,
+
+PRIMARY KEY(guild_id,date_key,user_id)
+
+)
+
+`);
+
+/* OPPONENT APPOINTMENTS */
+
+await run(`
+
+CREATE TABLE IF NOT EXISTS opponent_appts (
+
+guild_id TEXT,
+
+date_key TEXT,
+
+user_id TEXT,
+
+count INTEGER DEFAULT 0,
+
+PRIMARY KEY(guild_id,date_key,user_id)
+
+)
+
+`);
+
+/* GYM */
+
+await run(`
+
+CREATE TABLE IF NOT EXISTS gym (
+
+guild_id TEXT,
+
+user_id TEXT,
+
+checkins INTEGER DEFAULT 0,
+
+PRIMARY KEY(guild_id,user_id)
+
+)
+
+`);
+
+/* LIVE BOARDS */
+
+await run(`
+
+CREATE TABLE IF NOT EXISTS live_boards (
+
+guild_id TEXT,
+
+name TEXT,
+
+message_id TEXT,
+
+PRIMARY KEY(guild_id,name)
+
+)
+
+`);
+
+/* SETTINGS */
+
+await run(`
+
+CREATE TABLE IF NOT EXISTS bot_settings (
+
+guild_id TEXT,
+
+key TEXT,
+
+value TEXT,
+
+PRIMARY KEY(guild_id,key)
+
+)
+
+`);
+
 }
 
 /* ================= SALES HELPERS ================= */
 
 async function ensureSalesRow(guildId, userId) {
-  await run(
-    `INSERT OR IGNORE INTO sales(guild_id,user_id) VALUES(?,?)`,
-    [guildId, userId]
-  );
+
+await run(
+
+`INSERT OR IGNORE INTO sales (guild_id,user_id,total_sales,self_gen,set_sales)
+
+VALUES (?, ?, 0,0,0)`,
+
+[guildId, userId]
+
+);
+
 }
 
-async function ensureOpponentRow(guildId, userId) {
-  await run(
-    `INSERT OR IGNORE INTO opponent_sales(guild_id,user_id) VALUES(?,?)`,
-    [guildId, userId]
-  );
+async function ensureOpponentSalesRow(guildId, userId) {
+
+await run(
+
+`INSERT OR IGNORE INTO opponent_sales (guild_id,user_id,total_sales,self_gen,set_sales)
+
+VALUES (?, ?, 0,0,0)`,
+
+[guildId, userId]
+
+);
+
+}
+/* ================= SALES RECORDING ================= */
+
+async function recordSetSale(guildId, closerId, setterId) {
+
+await ensureSalesRow(guildId, closerId);
+
+await ensureSalesRow(guildId, setterId);
+
+await run(
+
+`UPDATE sales SET total_sales = total_sales + 1 WHERE guild_id=? AND user_id=?`,
+
+[guildId, closerId]
+
+);
+
+await run(
+
+`UPDATE sales
+
+SET total_sales = total_sales + 1,
+
+set_sales = set_sales + 1
+
+WHERE guild_id=? AND user_id=?`,
+
+[guildId, setterId]
+
+);
+
+}
+
+async function recordSelfGen(guildId, userId) {
+
+await ensureSalesRow(guildId, userId);
+
+await run(
+
+`UPDATE sales
+
+SET total_sales = total_sales + 1,
+
+self_gen = self_gen + 1,
+
+set_sales = set_sales + 1
+
+WHERE guild_id=? AND user_id=?`,
+
+[guildId, userId]
+
+);
+
 }
 
 async function getSalesRows(guildId) {
-  return await all(
-    `SELECT user_id,total_sales,self_gen,set_sales
-     FROM sales
-     WHERE guild_id=?
-     ORDER BY total_sales DESC`,
-    [guildId]
-  );
+
+return await all(
+
+`SELECT user_id,total_sales,self_gen,set_sales
+
+FROM sales
+
+WHERE guild_id=?
+
+ORDER BY total_sales DESC`,
+
+[guildId]
+
+);
+
 }
 
-async function getOpponentSalesRows(guildId) {
-  return await all(
-    `SELECT user_id,total_sales,self_gen,set_sales
-     FROM opponent_sales
-     WHERE guild_id=?
-     ORDER BY total_sales DESC`,
-    [guildId]
-  );
+/* ================= GYM ================= */
+
+async function ensureGymRow(guildId, userId) {
+
+await run(
+
+`INSERT OR IGNORE INTO gym (guild_id,user_id,checkins)
+
+VALUES (?, ?, 0)`,
+
+[guildId, userId]
+
+);
+
 }
 
-/* ================= APPOINTMENT HELPERS ================= */
+async function getGymCount(guildId, userId) {
 
-async function addAppt(guildId, userId, dateKey, delta) {
+const row = await get(
 
-  await run(
-    `INSERT OR IGNORE INTO daily_appts(guild_id,date_key,user_id,count)
-     VALUES(?,?,?,0)`,
-    [guildId, dateKey, userId]
-  );
+`SELECT checkins FROM gym WHERE guild_id=? AND user_id=?`,
 
-  await run(
-    `UPDATE daily_appts
-     SET count = count + ?
-     WHERE guild_id=? AND date_key=? AND user_id=?`,
-    [delta, guildId, dateKey, userId]
-  );
+[guildId, userId]
+
+);
+
+return row?.checkins ?? 0;
+
 }
 
-async function getApptRows(guildId, dateKey) {
-  return await all(
-    `SELECT user_id,count
-     FROM daily_appts
-     WHERE guild_id=? AND date_key=?
-     ORDER BY count DESC`,
-    [guildId, dateKey]
-  );
+async function addGymDelta(guildId, userId, delta) {
+
+await ensureGymRow(guildId, userId);
+
+const current = await getGymCount(guildId, userId);
+
+const next = Math.max(0, current + delta);
+
+await run(
+
+`UPDATE gym SET checkins=? WHERE guild_id=? AND user_id=?`,
+
+[next, guildId, userId]
+
+);
+
+return next;
+
 }
 
-async function getOpponentApptRows(guildId, dateKey) {
-  return await all(
-    `SELECT user_id,count
-     FROM opponent_appts
-     WHERE guild_id=? AND date_key=?
-     ORDER BY count DESC`,
-    [guildId, dateKey]
-  );
+async function getGymRows(guildId) {
+
+return await all(
+
+`SELECT user_id,checkins FROM gym
+
+WHERE guild_id=?
+
+ORDER BY checkins DESC`,
+
+[guildId]
+
+);
+
 }
 
-/* ================= GOAL ================= */
+/* ================= APPOINTMENTS ================= */
 
-async function setGoal(value) {
-  await run(
-    `INSERT OR REPLACE INTO settings(key,value)
-     VALUES("daily_goal",?)`,
-    [value]
-  );
+async function addDailyAppt(guildId, userId, dateKey, delta) {
+
+await run(
+
+`INSERT OR IGNORE INTO daily_appts (guild_id,date_key,user_id,count)
+
+VALUES (?, ?, ?, 0)`,
+
+[guildId, dateKey, userId]
+
+);
+
+const row = await get(
+
+`SELECT count FROM daily_appts
+
+WHERE guild_id=? AND date_key=? AND user_id=?`,
+
+[guildId, dateKey, userId]
+
+);
+
+const current = row?.count ?? 0;
+
+const next = Math.max(0, current + delta);
+
+await run(
+
+`UPDATE daily_appts SET count=?
+
+WHERE guild_id=? AND date_key=? AND user_id=?`,
+
+[next, guildId, dateKey, userId]
+
+);
+
+return next;
+
 }
 
-async function getGoal() {
-  const row = await get(
-    `SELECT value FROM settings WHERE key="daily_goal"`
-  );
-  return row ? Number(row.value) : 50;
+async function getDailyApptRows(guildId, dateKey) {
+
+return await all(
+
+`SELECT user_id,count
+
+FROM daily_appts
+
+WHERE guild_id=? AND date_key=?
+
+ORDER BY count DESC`,
+
+[guildId, dateKey]
+
+);
+
 }
 
-/* ================= READY ================= */
+async function clearDailyAppts(guildId, dateKey) {
 
-client.once("ready", async () => {
-  console.log(`Bot online: ${client.user.tag}`);
+await run(
+
+`DELETE FROM daily_appts
+
+WHERE guild_id=? AND date_key=?`,
+
+[guildId, dateKey]
+
+);
+
+}
+
+/* ================= COMMAND HANDLER ================= */
+
+client.on("messageCreate", async (msg) => {
+
+if (!msg.guild) return;
+
+if (msg.author.bot) return;
+
+const content = msg.content.trim();
+
+if (!content.startsWith(PREFIX)) return;
+
+const parts = content.slice(PREFIX.length).split(/\s+/);
+
+const command = parts.shift().toLowerCase();
+
+const guildId = msg.guild.id;
+
+/* SALES */
+
+if (command === "setsale") {
+
+if (!canClose(msg.member)) return deny(msg);
+
+const setter = msg.mentions.users.first();
+
+if (!setter) return msg.reply("Usage: !setsale @user");
+
+await recordSetSale(guildId, msg.author.id, setter.id);
+
+return msg.reply("Sale recorded.");
+
+}
+
+if (command === "selfgen") {
+
+if (!canClose(msg.member)) return deny(msg);
+
+await recordSelfGen(guildId, msg.author.id);
+
+return msg.reply("Self-gen recorded.");
+
+}
+
+/* GYM */
+
+if (command === "gym") {
+
+const next = await addGymDelta(guildId, msg.author.id, 1);
+
+return msg.reply(`Gym check-in logged. Total: ${next}`);
+
+}
+
+if (command === "gymrank") {
+
+const rows = await getGymRows(guildId);
+
+let text = "**Gym Leaderboard**\n";
+
+for (let i=0;i<rows.length;i++) {
+
+const name = await displayNameFor(msg.guild, rows[i].user_id);
+
+text += `${i+1}. ${name}: ${rows[i].checkins}\n`;
+
+}
+
+return msg.reply(text);
+
+}
+
+/* APPOINTMENTS */
+
+if (command === "setappt") {
+
+const dateKey = ctDateKey();
+
+const next = await addDailyAppt(guildId, msg.author.id, dateKey, 1);
+
+return msg.reply(`Appointment added. Total today: ${next}`);
+
+}
+
+if (command === "appts") {
+
+const dateKey = ctDateKey();
+
+const rows = await getDailyApptRows(guildId, dateKey);
+
+let text = `Appointments ${dateKey}\n`;
+
+for (let i=0;i<rows.length;i++) {
+
+const name = await displayNameFor(msg.guild, rows[i].user_id);
+
+text += `${i+1}. ${name} — ${rows[i].count}\n`;
+
+}
+
+return msg.reply(text);
+
+}
+
 });
+/* ================= LIVE BOARD STORAGE ================= */
 
-(async () => {
-  await initDb();
-  await client.login(TOKEN);
-})();
-/* ================= LIVE BOARD ENGINE ================= */
+async function getBoardId(guildId, name) {
 
-async function getBoardId(name) {
-  const row = await get(`SELECT message_id FROM boards WHERE name=?`, [name]);
-  return row ? row.message_id : null;
+const row = await get(
+
+`SELECT message_id FROM live_boards WHERE guild_id=? AND name=?`,
+
+[guildId, name]
+
+);
+
+return row?.message_id || null;
+
 }
 
-async function setBoardId(name, id) {
-  await run(
-    `INSERT OR REPLACE INTO boards(name,message_id) VALUES(?,?)`,
-    [name, id]
-  );
+async function setBoardId(guildId, name, id) {
+
+await run(
+
+`INSERT OR REPLACE INTO live_boards (guild_id,name,message_id)
+
+VALUES (?, ?, ?)`,
+
+[guildId, name, id]
+
+);
+
 }
 
-async function ensureBoard(channelId, name, content) {
-  const channel = await client.channels.fetch(channelId);
+async function ensureBoard(channel, guildId, name, content) {
 
-  let messageId = await getBoardId(name);
+let msgId = await getBoardId(guildId, name);
 
-  if (messageId) {
-    try {
-      const msg = await channel.messages.fetch(messageId);
-      await msg.edit(content);
-      return;
-    } catch {}
-  }
+if (msgId) {
 
-  const msg = await channel.send(content);
-  await msg.pin();
-  await setBoardId(name, msg.id);
+try {
+
+const msg = await channel.messages.fetch(msgId);
+
+await msg.edit(content);
+
+return;
+
+} catch {}
+
 }
+
+const msg = await channel.send(content);
+
+await msg.pin();
+
+await setBoardId(guildId, name, msg.id);
+
+}
+
+/* ================= PROGRESS BAR ================= */
 
 function progressBar(current, goal) {
-  const percent = Math.min(100, Math.floor((current / goal) * 100));
-  const blocks = Math.floor(percent / 10);
-  const bar =
-    "█".repeat(blocks) + "░".repeat(10 - blocks);
-  return `${bar} ${percent}%`;
+
+const width = 10;
+
+if (!goal) return "░░░░░░░░░░ 0%";
+
+const pct = Math.min(100, Math.floor((current/goal)*100));
+
+const filled = Math.floor(pct/10);
+
+return `${"█".repeat(filled)}${"░".repeat(width-filled)} ${pct}%`;
+
 }
 
-/* ================= LIVE SALES ================= */
+/* ================= SALES RENDER ================= */
 
 async function renderSalesBoard(guild) {
 
-  const rows = await getSalesRows(guild.id);
+const rows = await getSalesRows(guild.id);
 
-  if (!rows.length) return "**Sales Leaderboard**\n(No sales yet)";
+let text = "**Sales Leaderboard**\n";
 
-  let text = "**Sales Leaderboard**\n";
+if (!rows.length) return text+"(No sales recorded)";
 
-  for (let i = 0; i < rows.length; i++) {
+for (let i=0;i<rows.length;i++) {
 
-    const name = await displayName(guild, rows[i].user_id);
+const name = await displayNameFor(guild, rows[i].user_id);
 
-    text += `${i + 1}. ${name}: ${rows[i].total_sales} sale${rows[i].total_sales === 1 ? "" : "s"} (Self-gen: ${rows[i].self_gen}, Set: ${rows[i].set_sales})\n`;
-  }
+text += `${i+1}. ${name}: ${rows[i].total_sales} sales\n`;
 
-  return text;
 }
 
-/* ================= LIVE APPOINTMENTS ================= */
+return text;
 
-async function renderApptBoard(guild) {
+}
 
-  const date = ctDateKey();
+/* ================= APPTS RENDER ================= */
 
-  const rows = await getApptRows(guild.id, date);
+async function renderApptsBoard(guild) {
 
-  let text = `📅 Daily Appointments — ${date} (CT)\n`;
+const dateKey = ctDateKey();
 
-  if (!rows.length) return text + "(No appointments yet)";
+const rows = await getDailyApptRows(guild.id,dateKey);
 
-  for (let i = 0; i < rows.length; i++) {
+let text = `Appointments ${dateKey}\n`;
 
-    const name = await displayName(guild, rows[i].user_id);
+if (!rows.length) return text+"(None yet)";
 
-    text += `${i + 1}. ${name} — ${rows[i].count}\n`;
-  }
+for (let i=0;i<rows.length;i++) {
 
-  return text;
+const name = await displayNameFor(guild, rows[i].user_id);
+
+text += `${i+1}. ${name} — ${rows[i].count}\n`;
+
+}
+
+return text;
+
 }
 
 /* ================= COMMAND CENTER ================= */
 
 async function renderCommandCenter(guild) {
 
-  const sales = await getSalesRows(guild.id);
+const sales = await getSalesRows(guild.id);
 
-  const appts = await getApptRows(guild.id, ctDateKey());
+const appts = await getDailyApptRows(guild.id,ctDateKey());
 
-  const goal = await getGoal();
+let totalAppts = 0;
 
-  let totalAppts = 0;
+appts.forEach(r=>totalAppts+=r.count);
 
-  appts.forEach(r => totalAppts += r.count);
+const goal = 50;
 
-  const bar = progressBar(totalAppts, goal);
+const bar = progressBar(totalAppts,goal);
 
-  let text = `**BLITZ COMMAND CENTER**\n\n`;
+let text = `BLITZ COMMAND CENTER\n\n`;
 
-  text += `**Appointments Leaderboard**\n`;
+text += `APPOINTMENTS\n`;
 
-  appts.slice(0,5).forEach((r,i)=>{
-    text += `${i+1}. <@${r.user_id}> — ${r.count}\n`;
-  });
+for (let i=0;i<appts.length;i++) {
 
-  text += `\n**Sales Leaderboard**\n`;
+const name = await displayNameFor(guild,appts[i].user_id);
 
-  sales.slice(0,5).forEach((r,i)=>{
-    text += `${i+1}. <@${r.user_id}> — ${r.total_sales}\n`;
-  });
-
-  text += `\n**Daily Goal Progress**\n`;
-
-  text += `Goal: ${goal}\n`;
-  text += `Current: ${totalAppts}\n`;
-  text += `${bar}\n`;
-
-  text += `\nLast Updated: ${ctNow()} CT`;
-
-  return text;
-}
-
-/* ================= MASTER UPDATE ================= */
-
-async function refreshLiveBoards(guild) {
-
-  const salesBoard = await renderSalesBoard(guild);
-  await ensureBoard(CHANNELS.SALES, "sales_board", salesBoard);
-
-  const apptBoard = await renderApptBoard(guild);
-  await ensureBoard(CHANNELS.APPOINTMENTS, "appts_board", apptBoard);
-
-  const center = await renderCommandCenter(guild);
-  await ensureBoard(CHANNELS.LIVE_SCOREBOARD, "command_center", center);
+text+=`${i+1}. ${name} — ${appts[i].count}\n`;
 
 }
-/* ================= SALES COMMANDS ================= */
 
-client.on("messageCreate", async (msg) => {
+text+=`\nSALES\n`;
 
-  if (!msg.guild) return;
-  if (msg.author.bot) return;
+for (let i=0;i<sales.length;i++) {
 
-  const content = msg.content.trim();
-  if (!content.startsWith(PREFIX)) return;
+const name = await displayNameFor(guild,sales[i].user_id);
 
-  const args = content.slice(PREFIX.length).split(/\s+/);
-  const command = args.shift().toLowerCase();
-  const guildId = msg.guild.id;
+text+=`${i+1}. ${name} — ${sales[i].total_sales}\n`;
 
-  try {
+}
 
-    /* ---------- SET SALE ---------- */
+text+=`\nDAILY GOAL\n`;
 
-    if (command === "setsale") {
+text+=`${bar}\n`;
 
-      if (!canClose(msg.member)) return deny(msg);
+text+=`\nLast Updated ${ctTimeLabel()} CT`;
 
-      const setter = msg.mentions.users.first();
+return text;
 
-      if (!setter) return msg.reply("Usage: !setsale @setter");
+}
 
-      await ensureSalesRow(guildId, msg.author.id);
-      await ensureSalesRow(guildId, setter.id);
+/* ================= LIVE REFRESH ================= */
 
-      await run(
-        `UPDATE sales SET total_sales = total_sales + 1 WHERE guild_id=? AND user_id=?`,
-        [guildId, msg.author.id]
-      );
+async function refreshLiveSystems(guild){
 
-      await run(
-        `UPDATE sales SET total_sales = total_sales + 1, set_sales = set_sales + 1 WHERE guild_id=? AND user_id=?`,
-        [guildId, setter.id]
-      );
+const salesChannel = guild.channels.cache.get(CHANNELS.SALES);
 
-      await refreshLiveBoards(msg.guild);
+const apptsChannel = guild.channels.cache.get(CHANNELS.APPOINTMENTS);
 
-      return msg.reply(`Sale recorded for <@${msg.author.id}> (setter <@${setter.id}>)`);
+const scoreboardChannel = guild.channels.cache.get(CHANNELS.LIVE_SCOREBOARD);
 
-    }
+if (salesChannel){
 
-    /* ---------- SELF GEN ---------- */
+const board = await renderSalesBoard(guild);
 
-    if (command === "selfgen") {
+await ensureBoard(salesChannel,guild.id,"sales_board",board);
 
-      if (!canClose(msg.member)) return deny(msg);
+}
 
-      await ensureSalesRow(guildId, msg.author.id);
+if (apptsChannel){
 
-      await run(
-        `UPDATE sales
-         SET total_sales = total_sales + 1,
-         self_gen = self_gen + 1,
-         set_sales = set_sales + 1
-         WHERE guild_id=? AND user_id=?`,
-        [guildId, msg.author.id]
-      );
+const board = await renderApptsBoard(guild);
 
-      await refreshLiveBoards(msg.guild);
+await ensureBoard(apptsChannel,guild.id,"appts_board",board);
 
-      return msg.reply(`Self-gen recorded for <@${msg.author.id}>`);
+}
 
-    }
+if (scoreboardChannel){
 
-    /* ---------- SALES LEADERBOARD ---------- */
+const board = await renderCommandCenter(guild);
 
-    if (command === "sales") {
+await ensureBoard(scoreboardChannel,guild.id,"command_center",board);
 
-      const board = await renderSalesBoard(msg.guild);
+}
 
-      return msg.reply(board);
+}
 
-    }
-
-    /* ---------- SET APPOINTMENT ---------- */
-
-    if (command === "setappt") {
-
-      const date = ctDateKey();
-
-      await addAppt(guildId, msg.author.id, date, 1);
-
-      await refreshLiveBoards(msg.guild);
-
-      return msg.reply(`Appointment recorded for <@${msg.author.id}>`);
-
-    }
-
-    /* ---------- REMOVE APPOINTMENT ---------- */
-
-    if (command === "removeappt") {
-
-      const date = ctDateKey();
-
-      const target = msg.mentions.users.first() || msg.author;
-
-      if (target.id !== msg.author.id && !isLeadership(msg.member)) {
-        return deny(msg);
-      }
-
-      await addAppt(guildId, target.id, date, -1);
-
-      await refreshLiveBoards(msg.guild);
-
-      return msg.reply(`Removed appointment from <@${target.id}>`);
-
-    }
-
-    /* ---------- APPOINTMENT LEADERBOARD ---------- */
-
-    if (command === "appts") {
-
-      const board = await renderApptBoard(msg.guild);
-
-      return msg.reply(board);
-
-    }
-
-    /* ---------- SET GOAL ---------- */
-
-    if (command === "setgoal") {
-
-      if (!isLeadership(msg.member)) return deny(msg);
-
-      const num = Number(args[0]);
-
-      if (!num) return msg.reply("Usage: !setgoal <number>");
-
-      await setGoal(num);
-
-      await refreshLiveBoards(msg.guild);
-
-      return msg.reply(`Daily goal set to ${num}`);
-
-    }
-
-  } catch (err) {
-
-    console.error(err);
-    msg.reply("Error running command.");
-
-  }
-
-});
-
-/* ================= AUTO REFRESH ================= */
+/* ================= BOT READY ================= */
 
 client.once("ready", async () => {
 
-  console.log("Live systems active");
+console.log(`Logged in as ${client.user.tag}`);
 
-  const guild = client.guilds.cache.first();
+for (const guild of client.guilds.cache.values()){
 
-  if (!guild) return;
+await refreshLiveSystems(guild);
 
-  await refreshLiveBoards(guild);
+}
 
-  setInterval(async () => {
+/* refresh every 5 minutes */
 
-    await refreshLiveBoards(guild);
+setInterval(async ()=>{
 
-  }, 300000); // 5 minutes
+for (const guild of client.guilds.cache.values()){
+
+await refreshLiveSystems(guild);
+
+}
+
+},300000);
 
 });
+
+/* ================= START BOT ================= */
+
+(async()=>{
+
+await initDb();
+
+await client.login(TOKEN);
+
+})();
