@@ -6,9 +6,14 @@ const sqlite3 = require("sqlite3").verbose();
 
 const PREFIX = "!";
 const TIMEZONE = "America/Chicago";
+
 const LEADERSHIP_ROLES = ["Leadership"];
 const CLOSER_ROLES = ["Closer"];
 const OPPONENT_ROLE_ID = "1479314578642042964";
+
+const SALES_CHANNEL_ID = "1458250404835098795";
+const APPOINTMENTS_CHANNEL_ID = "1458250231354495150";
+const GENERAL_CHAT_CHANNEL_ID = "1458248543000068228";
 
 const TOKEN = process.env.DISCORD_TOKEN;
 if (!TOKEN) {
@@ -84,6 +89,14 @@ function ctTimestampString(date = new Date()) {
     hour: "numeric",
     minute: "2-digit",
   }).format(date);
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function nowMs() {
+  return Date.now();
 }
 
 /* ================= PERMISSIONS ================= */
@@ -211,6 +224,34 @@ async function initDb() {
     )
   `);
 
+  await run(`
+    CREATE TABLE IF NOT EXISTS board_messages (
+      guild_id TEXT NOT NULL,
+      board_key TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      PRIMARY KEY (guild_id, board_key)
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS event_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      amount INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS alert_log (
+      alert_key TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL
+    )
+  `);
+
   try {
     await run(`ALTER TABLE sales ADD COLUMN total_sales INTEGER NOT NULL DEFAULT 0`);
   } catch {}
@@ -228,7 +269,7 @@ async function claimMessage(messageId) {
     await run(
       `INSERT INTO processed_messages (message_id, created_at)
        VALUES (?, ?)`,
-      [messageId, new Date().toISOString()]
+      [messageId, nowIso()]
     );
     return true;
   } catch {
@@ -565,6 +606,251 @@ async function clearBlitzApptsTarget(guildId) {
   return { ok: false, reason: "none" };
 }
 
+/* ================= ACTIVITY / ALERT HELPERS ================= */
+
+async function logEvent(guildId, eventType, userId, amount = 1) {
+  await run(
+    `INSERT INTO event_log (guild_id, event_type, user_id, amount, created_at)
+     VALUES (?, ?, ?, ?, ?)`,
+    [guildId, eventType, userId, amount, nowIso()]
+  );
+}
+
+async function recentEventCount(guildId, eventType, minutes) {
+  return get(
+    `SELECT COALESCE(SUM(amount), 0) AS total
+     FROM event_log
+     WHERE guild_id = ?
+       AND event_type = ?
+       AND created_at >= datetime('now', ?)`,
+    [guildId, eventType, `-${minutes} minutes`]
+  );
+}
+
+async function claimAlert(alertKey) {
+  try {
+    await run(
+      `INSERT INTO alert_log (alert_key, created_at)
+       VALUES (?, ?)`,
+      [alertKey, nowIso()]
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function getChannelSafe(guild, channelId) {
+  try {
+    return await guild.channels.fetch(channelId);
+  } catch {
+    return null;
+  }
+}
+
+async function postGeneralHype(guild, content) {
+  const channel = await getChannelSafe(guild, GENERAL_CHAT_CHANNEL_ID);
+  if (!channel?.isTextBased?.()) return;
+  await channel.send(content);
+}
+
+/* ================= LIVE BOARD HELPERS ================= */
+
+async function getBoardMessageRow(guildId, boardKey) {
+  return get(
+    `SELECT channel_id, message_id
+     FROM board_messages
+     WHERE guild_id = ? AND board_key = ?`,
+    [guildId, boardKey]
+  );
+}
+
+async function setBoardMessageRow(guildId, boardKey, channelId, messageId) {
+  await run(
+    `INSERT INTO board_messages (guild_id, board_key, channel_id, message_id)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(guild_id, board_key)
+     DO UPDATE SET channel_id = excluded.channel_id, message_id = excluded.message_id`,
+    [guildId, boardKey, channelId, messageId]
+  );
+}
+
+async function ensurePinnedBoard(guild, boardKey, channelId, content) {
+  const channel = await getChannelSafe(guild, channelId);
+  if (!channel?.isTextBased?.()) return;
+
+  const existing = await getBoardMessageRow(guild.id, boardKey);
+
+  if (existing?.message_id) {
+    try {
+      const msg = await channel.messages.fetch(existing.message_id);
+      await msg.edit(content);
+      return;
+    } catch {}
+  }
+
+  const newMsg = await channel.send(content);
+  try {
+    await newMsg.pin();
+  } catch {}
+  await setBoardMessageRow(guild.id, boardKey, channel.id, newMsg.id);
+}
+
+async function buildSalesBoard(guildId, guild) {
+  const rows = await all(
+    `SELECT user_id, total_sales, self_gen, set_sales
+     FROM sales
+     WHERE guild_id = ?
+     ORDER BY total_sales DESC, self_gen DESC, set_sales DESC`,
+    [guildId]
+  );
+
+  let output = "🏆 **LIVE SALES LEADERBOARD**\n";
+  output += `Updated: ${ctTimestampString()} CT\n\n`;
+
+  if (!rows.length) {
+    output += "No sales recorded yet.";
+    return output;
+  }
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const name = await displayNameFor(guild, r.user_id);
+    output += `${i + 1}. ${name} — ${r.total_sales} sale${r.total_sales === 1 ? "" : "s"} (Self-gen: ${r.self_gen}, Set: ${r.set_sales})\n`;
+  }
+
+  return output.slice(0, 1900);
+}
+
+async function buildApptsBoard(guildId, guild) {
+  const dateKey = ctDateKey();
+  const rows = await all(
+    `SELECT user_id, count
+     FROM daily_appts
+     WHERE guild_id = ? AND date_key = ?
+     ORDER BY count DESC, user_id ASC`,
+    [guildId, dateKey]
+  );
+
+  let output = "📅 **LIVE APPOINTMENTS LEADERBOARD**\n";
+  output += `Date: ${dateKey} (CT)\n`;
+  output += `Updated: ${ctTimestampString()} CT\n\n`;
+
+  if (!rows.length) {
+    output += "No appointments recorded yet today.";
+    return output;
+  }
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const name = await displayNameFor(guild, r.user_id);
+    output += `${i + 1}. ${name} — ${r.count}\n`;
+  }
+
+  return output.slice(0, 1900);
+}
+
+async function refreshLiveBoards(guild) {
+  const salesBoard = await buildSalesBoard(guild.id, guild);
+  const apptsBoard = await buildApptsBoard(guild.id, guild);
+
+  await ensurePinnedBoard(guild, "team_sales_live", SALES_CHANNEL_ID, salesBoard);
+  await ensurePinnedBoard(guild, "team_appts_live", APPOINTMENTS_CHANNEL_ID, apptsBoard);
+}
+
+/* ================= HYPE / MILESTONE HELPERS ================= */
+
+async function evaluateSalesMoments(guild, guildId, userId) {
+  const userRow = await get(
+    `SELECT total_sales, self_gen, set_sales
+     FROM sales
+     WHERE guild_id = ? AND user_id = ?`,
+    [guildId, userId]
+  );
+  if (!userRow) return;
+
+  const userName = await displayNameFor(guild, userId);
+  const dateKey = ctDateKey();
+
+  const firstSaleKey = `sale:first:${guildId}:${dateKey}:${userId}`;
+  if ((userRow.total_sales || 0) === 1 && (await claimAlert(firstSaleKey))) {
+    await postGeneralHype(guild, `🔥 **First sale on the board!** ${userName} just got the team rolling!`);
+  }
+
+  for (const milestone of [2, 3, 5, 10]) {
+    const key = `sale:rep:${guildId}:${dateKey}:${userId}:${milestone}`;
+    if ((userRow.total_sales || 0) >= milestone && (await claimAlert(key))) {
+      await postGeneralHype(guild, `🏆 **Sales Milestone!** ${userName} just hit **${milestone} sales**! Keep the pressure on!`);
+    }
+  }
+
+  const teamRow = await get(
+    `SELECT COALESCE(SUM(total_sales - set_sales + self_gen), 0) AS team_sales
+     FROM sales
+     WHERE guild_id = ?`,
+    [guildId]
+  );
+
+  for (const milestone of [3, 5, 10, 15, 20]) {
+    const key = `sale:team:${guildId}:${dateKey}:${milestone}`;
+    if ((teamRow?.team_sales || 0) >= milestone && (await claimAlert(key))) {
+      await postGeneralHype(guild, `🚀 **TEAM SALES MILESTONE!** Solrite just reached **${milestone} true team sales**! Keep stacking wins!`);
+    }
+  }
+
+  const recentSales = await recentEventCount(guildId, "sale", 10);
+  const surgeBucket = Math.floor(nowMs() / (15 * 60 * 1000));
+  if ((recentSales?.total || 0) >= 2 && (await claimAlert(`sale:surge:${guildId}:${surgeBucket}`))) {
+    await postGeneralHype(guild, `⚡ **SALES SURGE!** The team has stacked **${recentSales.total} sales** in the last 10 minutes! Momentum is building!`);
+  }
+}
+
+async function evaluateApptMoments(guild, guildId, userId) {
+  const dateKey = ctDateKey();
+
+  const userRow = await get(
+    `SELECT count
+     FROM daily_appts
+     WHERE guild_id = ? AND date_key = ? AND user_id = ?`,
+    [guildId, dateKey, userId]
+  );
+  if (!userRow) return;
+
+  const userName = await displayNameFor(guild, userId);
+
+  const firstApptKey = `appt:first:${guildId}:${dateKey}:${userId}`;
+  if ((userRow.count || 0) === 1 && (await claimAlert(firstApptKey))) {
+    await postGeneralHype(guild, `📞 **First appointment locked in!** ${userName} is on the board!`);
+  }
+
+  for (const milestone of [3, 5, 10]) {
+    const key = `appt:rep:${guildId}:${dateKey}:${userId}:${milestone}`;
+    if ((userRow.count || 0) >= milestone && (await claimAlert(key))) {
+      await postGeneralHype(guild, `🎯 **Appointments Milestone!** ${userName} just reached **${milestone} appointments today**!`);
+    }
+  }
+
+  const teamRow = await get(
+    `SELECT COALESCE(SUM(count), 0) AS team_appts
+     FROM daily_appts
+     WHERE guild_id = ? AND date_key = ?`,
+    [guildId, dateKey]
+  );
+
+  for (const milestone of [5, 10, 15, 20, 30]) {
+    const key = `appt:team:${guildId}:${dateKey}:${milestone}`;
+    if ((teamRow?.team_appts || 0) >= milestone && (await claimAlert(key))) {
+      await postGeneralHype(guild, `🔥 **TEAM APPOINTMENT MILESTONE!** Solrite just reached **${milestone} appointments today**!`);
+    }
+  }
+
+  const recentAppts = await recentEventCount(guildId, "appt", 10);
+  const surgeBucket = Math.floor(nowMs() / (15 * 60 * 1000));
+  if ((recentAppts?.total || 0) >= 3 && (await claimAlert(`appt:surge:${guildId}:${surgeBucket}`))) {
+    await postGeneralHype(guild, `🚀 **APPOINTMENT SURGE!** The team just put up **${recentAppts.total} appointments** in the last 10 minutes! Keep the gas down!`);
+  }
+}
+
 /* ================= PARSING HELPERS ================= */
 
 function parsePositiveInt(s) {
@@ -606,9 +892,13 @@ client.on("messageCreate", async (msg) => {
       }
 
       await recordSetSale(guildId, msg.author.id, target.id);
+      await logEvent(guildId, "sale", msg.author.id, 1);
 
       const closerName = msg.member?.displayName || msg.author.username;
       const setterName = await displayNameFor(msg.guild, target.id);
+
+      await refreshLiveBoards(msg.guild);
+      await evaluateSalesMoments(msg.guild, guildId, msg.author.id);
 
       return msg.reply(
         `✅ Sale recorded. +1 sale to ${closerName} & ${setterName}. Set credited to ${setterName}.`
@@ -621,7 +911,13 @@ client.on("messageCreate", async (msg) => {
       }
 
       await recordSelfGen(guildId, msg.author.id);
+      await logEvent(guildId, "sale", msg.author.id, 1);
+
       const name = msg.member?.displayName || msg.author.username;
+
+      await refreshLiveBoards(msg.guild);
+      await evaluateSalesMoments(msg.guild, guildId, msg.author.id);
+
       return msg.reply(`✅ Self-gen recorded for ${name}.`);
     }
 
@@ -657,6 +953,7 @@ client.on("messageCreate", async (msg) => {
       }
 
       await run(`DELETE FROM sales WHERE guild_id = ?`, [guildId]);
+      await refreshLiveBoards(msg.guild);
       return msg.reply("🧹 Sales leaderboard cleared.");
     }
 
@@ -726,22 +1023,24 @@ client.on("messageCreate", async (msg) => {
     }
 
     if (command === "compsales") {
-const ourSales = await all(
-  `SELECT user_id, total_sales, self_gen, set_sales,
-          (total_sales - set_sales + self_gen) AS comp_sales
-   FROM sales
-   WHERE guild_id = ?
-   ORDER BY comp_sales DESC, total_sales DESC`,
-  [guildId]
-);
-const opSales = await all(
-  `SELECT user_id, total_sales, self_gen, set_sales,
-          (total_sales - set_sales + self_gen) AS comp_sales
-   FROM op_sales
-   WHERE guild_id = ?
-   ORDER BY comp_sales DESC, total_sales DESC`,
-  [guildId]
-);
+      const ourSales = await all(
+        `SELECT user_id, total_sales, self_gen, set_sales,
+                (total_sales - set_sales + self_gen) AS comp_sales
+         FROM sales
+         WHERE guild_id = ?
+         ORDER BY comp_sales DESC, total_sales DESC`,
+        [guildId]
+      );
+
+      const opSales = await all(
+        `SELECT user_id, total_sales, self_gen, set_sales,
+                (total_sales - set_sales + self_gen) AS comp_sales
+         FROM op_sales
+         WHERE guild_id = ?
+         ORDER BY comp_sales DESC, total_sales DESC`,
+        [guildId]
+      );
+
       let output = "**🔥 Competition Sales Leaderboard**\n\n";
 
       output += "**Solrite Team**\n";
@@ -751,7 +1050,7 @@ const opSales = await all(
         for (let i = 0; i < ourSales.length; i++) {
           const r = ourSales[i];
           const name = await displayNameFor(msg.guild, r.user_id);
-          output += `${i + 1}. ${name} — ${r.comp_sales}\n`
+          output += `${i + 1}. ${name} — ${r.comp_sales}\n`;
         }
       }
 
@@ -762,7 +1061,7 @@ const opSales = await all(
         for (let i = 0; i < opSales.length; i++) {
           const r = opSales[i];
           const name = await displayNameFor(msg.guild, r.user_id);
-          output += `${i + 1}. ${name} — ${r.total_sales}\n`;
+          output += `${i + 1}. ${name} — ${r.comp_sales}\n`;
         }
       }
 
@@ -779,6 +1078,10 @@ const opSales = await all(
       if (active) {
         await addBlitzAppt(guildId, active.blitz_name, dateKey, msg.author.id, +1);
       }
+
+      await logEvent(guildId, "appt", msg.author.id, 1);
+      await refreshLiveBoards(msg.guild);
+      await evaluateApptMoments(msg.guild, guildId, msg.author.id);
 
       const name = msg.member?.displayName || msg.author.username;
       return msg.reply(`✅ Appointment added for ${name}. Today: ${newCount}`);
@@ -810,6 +1113,7 @@ const opSales = await all(
 
       const dateKey = ctDateKey();
       await clearDailyAppts(guildId, dateKey);
+      await refreshLiveBoards(msg.guild);
       return msg.reply("🧹 Daily appointments cleared for today (CT).");
     }
 
@@ -828,6 +1132,8 @@ const opSales = await all(
       if (active) {
         await addBlitzAppt(guildId, active.blitz_name, dateKey, targetUserId, -1);
       }
+
+      await refreshLiveBoards(msg.guild);
 
       const name = mentioned
         ? await displayNameFor(msg.guild, targetUserId)
@@ -933,35 +1239,44 @@ const opSales = await all(
     if (command === "comp") {
       const dateKey = ctDateKey();
 
-const ourSalesRows = await all(
-  `SELECT total_sales, self_gen, set_sales
-   FROM sales
-   WHERE guild_id = ?`,
-  [guildId]
-);
-const opSalesRows = await all(
-  `SELECT total_sales, self_gen, set_sales
-   FROM op_sales
-   WHERE guild_id = ?`,
-  [guildId]
-);
+      const ourSalesRows = await all(
+        `SELECT total_sales, self_gen, set_sales
+         FROM sales
+         WHERE guild_id = ?`,
+        [guildId]
+      );
+
+      const opSalesRows = await all(
+        `SELECT total_sales, self_gen, set_sales
+         FROM op_sales
+         WHERE guild_id = ?`,
+        [guildId]
+      );
+
       const ourApptRows = await all(
-        `SELECT count FROM daily_appts WHERE guild_id = ? AND date_key = ?`,
+        `SELECT count
+         FROM daily_appts
+         WHERE guild_id = ? AND date_key = ?`,
         [guildId, dateKey]
       );
+
       const opApptRows = await all(
-        `SELECT count FROM op_daily_appts WHERE guild_id = ? AND date_key = ?`,
+        `SELECT count
+         FROM op_daily_appts
+         WHERE guild_id = ? AND date_key = ?`,
         [guildId, dateKey]
       );
 
       const ourSalesTotal = ourSalesRows.reduce(
-  (sum, r) => sum + ((r.total_sales || 0) - (r.set_sales || 0) + (r.self_gen || 0)),
-  0
-);
-const opSalesTotal = opSalesRows.reduce(
-  (sum, r) => sum + ((r.total_sales || 0) - (r.set_sales || 0) + (r.self_gen || 0)),
-  0
-);
+        (sum, r) => sum + ((r.total_sales || 0) - (r.set_sales || 0) + (r.self_gen || 0)),
+        0
+      );
+
+      const opSalesTotal = opSalesRows.reduce(
+        (sum, r) => sum + ((r.total_sales || 0) - (r.set_sales || 0) + (r.self_gen || 0)),
+        0
+      );
+
       const ourApptsTotal = ourApptRows.reduce((sum, r) => sum + (r.count || 0), 0);
       const opApptsTotal = opApptRows.reduce((sum, r) => sum + (r.count || 0), 0);
 
@@ -1197,6 +1512,14 @@ ${winnerLine}`;
 
 client.once("clientReady", async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
+
+  for (const guild of client.guilds.cache.values()) {
+    try {
+      await refreshLiveBoards(guild);
+    } catch (err) {
+      console.error("Live board init error:", err);
+    }
+  }
 });
 
 /* ================= START ================= */
