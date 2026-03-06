@@ -1,12 +1,13 @@
-require("dotenv").config();
-const { Client, GatewayIntentBits } = require("discord.js");
+krequire("dotenv").config();
+const { Client, GatewayIntentBits, PermissionsBitField } = require("discord.js");
 const sqlite3 = require("sqlite3").verbose();
 
-// ===== CONFIG =====
+/* ================= CONFIG ================= */
+
 const PREFIX = "!";
-const TIMEZONE = "America/Chicago"; // Central Time
-const LEADERSHIP_ROLES = ["Leadership"]; // adjust if needed
-const CLOSER_ROLES = ["Closer"]; // adjust if needed
+const TIMEZONE = "America/Chicago";
+const LEADERSHIP_ROLES = ["Leadership"];
+const CLOSER_ROLES = ["Closer"];
 const OPPONENT_ROLE_ID = "1479314578642042964";
 
 const TOKEN = process.env.DISCORD_TOKEN;
@@ -15,10 +16,10 @@ if (!TOKEN) {
   process.exit(1);
 }
 
-// Keep same DB file name so gym data persists when storage persists
 const DB_PATH = process.env.DB_PATH || "./bot.db";
 
-// ===== DISCORD =====
+/* ================= DISCORD ================= */
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -27,18 +28,19 @@ const client = new Client({
   ],
 });
 
-// ===== DB =====
+/* ================= DB ================= */
+
 const db = new sqlite3.Database(DB_PATH);
 
-// Promisified helpers
 function run(sql, params = []) {
   return new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
+    db.run(sql, params, function onRun(err) {
       if (err) reject(err);
       else resolve(this);
     });
   });
 }
+
 function get(sql, params = []) {
   return new Promise((resolve, reject) => {
     db.get(sql, params, (err, row) => {
@@ -47,6 +49,7 @@ function get(sql, params = []) {
     });
   });
 }
+
 function all(sql, params = []) {
   return new Promise((resolve, reject) => {
     db.all(sql, params, (err, rows) => {
@@ -56,7 +59,8 @@ function all(sql, params = []) {
   });
 }
 
-// ===== TIME HELPERS (Central Time) =====
+/* ================= TIME HELPERS ================= */
+
 function ctDateKey(date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: TIMEZONE,
@@ -68,7 +72,7 @@ function ctDateKey(date = new Date()) {
   const y = parts.find((p) => p.type === "year")?.value;
   const m = parts.find((p) => p.type === "month")?.value;
   const d = parts.find((p) => p.type === "day")?.value;
-  return `${y}-${m}-${d}`; // YYYY-MM-DD
+  return `${y}-${m}-${d}`;
 }
 
 function ctTimestampString(date = new Date()) {
@@ -82,16 +86,21 @@ function ctTimestampString(date = new Date()) {
   }).format(date);
 }
 
-// ===== PERMISSIONS =====
+/* ================= PERMISSIONS ================= */
+
 function hasRole(member, roleNames) {
   if (!member?.roles?.cache) return false;
   const lower = roleNames.map((r) => r.toLowerCase());
   return member.roles.cache.some((r) => lower.includes(r.name.toLowerCase()));
 }
 
+function isAdmin(member) {
+  return !!member?.permissions?.has?.(PermissionsBitField.Flags.Administrator);
+}
+
 function isLeadership(member) {
   if (!member) return false;
-  if (member.permissions?.has?.("Administrator")) return true;
+  if (isAdmin(member)) return true;
   return hasRole(member, LEADERSHIP_ROLES);
 }
 
@@ -103,13 +112,13 @@ function canSetSale(member) {
 
 function canUseOpponent(member) {
   if (!member) return false;
-  if (member.permissions?.has?.("Administrator")) return true;
+  if (isAdmin(member)) return true;
   if (isLeadership(member)) return true;
-
   return member.roles.cache.some((r) => r.id === OPPONENT_ROLE_ID);
 }
 
-// ===== DISPLAY NAME =====
+/* ================= DISPLAY NAME ================= */
+
 async function displayNameFor(guild, userId) {
   try {
     const member = await guild.members.fetch(userId);
@@ -119,9 +128,9 @@ async function displayNameFor(guild, userId) {
   }
 }
 
-// ===== INIT DB =====
+/* ================= DB INIT ================= */
+
 async function initDb() {
-  // SALES
   await run(`
     CREATE TABLE IF NOT EXISTS sales (
       guild_id TEXT NOT NULL,
@@ -133,17 +142,6 @@ async function initDb() {
     )
   `);
 
-  // migrate if older schema
-  try {
-    await run(`ALTER TABLE sales ADD COLUMN total_sales INTEGER NOT NULL DEFAULT 0`);
-  } catch {}
-  await run(`
-    UPDATE sales
-    SET total_sales = (self_gen + set_sales)
-    WHERE total_sales = 0 AND (self_gen + set_sales) > 0
-  `);
-
-  // GYM (do not rename)
   await run(`
     CREATE TABLE IF NOT EXISTS gym (
       guild_id TEXT NOT NULL,
@@ -153,7 +151,6 @@ async function initDb() {
     )
   `);
 
-  // DAILY APPTS
   await run(`
     CREATE TABLE IF NOT EXISTS daily_appts (
       guild_id TEXT NOT NULL,
@@ -164,7 +161,6 @@ async function initDb() {
     )
   `);
 
-  // BLITZ META
   await run(`
     CREATE TABLE IF NOT EXISTS appt_blitz (
       guild_id TEXT NOT NULL,
@@ -176,7 +172,6 @@ async function initDb() {
     )
   `);
 
-  // BLITZ APPTS (by day)
   await run(`
     CREATE TABLE IF NOT EXISTS blitz_appts (
       guild_id TEXT NOT NULL,
@@ -188,15 +183,6 @@ async function initDb() {
     )
   `);
 
-  // MESSAGE DEDUPE
-  await run(`
-    CREATE TABLE IF NOT EXISTS processed_messages (
-      message_id TEXT PRIMARY KEY,
-      created_at TEXT NOT NULL
-    )
-  `);
-
-  // OPPONENT SALES
   await run(`
     CREATE TABLE IF NOT EXISTS op_sales (
       guild_id TEXT NOT NULL,
@@ -208,7 +194,6 @@ async function initDb() {
     )
   `);
 
-  // OPPONENT DAILY APPTS
   await run(`
     CREATE TABLE IF NOT EXISTS op_daily_appts (
       guild_id TEXT NOT NULL,
@@ -218,9 +203,41 @@ async function initDb() {
       PRIMARY KEY (guild_id, date_key, user_id)
     )
   `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS processed_messages (
+      message_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL
+    )
+  `);
+
+  try {
+    await run(`ALTER TABLE sales ADD COLUMN total_sales INTEGER NOT NULL DEFAULT 0`);
+  } catch {}
+  await run(`
+    UPDATE sales
+    SET total_sales = (self_gen + set_sales)
+    WHERE total_sales = 0 AND (self_gen + set_sales) > 0
+  `);
 }
 
-// ===== SALES HELPERS =====
+/* ================= MESSAGE DEDUPE ================= */
+
+async function claimMessage(messageId) {
+  try {
+    await run(
+      `INSERT INTO processed_messages (message_id, created_at)
+       VALUES (?, ?)`,
+      [messageId, new Date().toISOString()]
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/* ================= SALES HELPERS ================= */
+
 async function ensureSalesRow(guildId, userId) {
   await run(
     `INSERT OR IGNORE INTO sales (guild_id, user_id, total_sales, self_gen, set_sales)
@@ -229,9 +246,6 @@ async function ensureSalesRow(guildId, userId) {
   );
 }
 
-// !setsale @setter
-// - both get +1 total sale
-// - mentioned user gets +1 set
 async function recordSetSale(guildId, closerId, setterId) {
   await ensureSalesRow(guildId, closerId);
   await ensureSalesRow(guildId, setterId);
@@ -240,6 +254,7 @@ async function recordSetSale(guildId, closerId, setterId) {
     `UPDATE sales SET total_sales = total_sales + 1 WHERE guild_id = ? AND user_id = ?`,
     [guildId, closerId]
   );
+
   await run(
     `UPDATE sales SET total_sales = total_sales + 1 WHERE guild_id = ? AND user_id = ?`,
     [guildId, setterId]
@@ -251,8 +266,6 @@ async function recordSetSale(guildId, closerId, setterId) {
   );
 }
 
-// !selfgen
-// - +1 sale, +1 self-gen, +1 set for sender
 async function recordSelfGen(guildId, userId) {
   await ensureSalesRow(guildId, userId);
   await run(
@@ -265,7 +278,8 @@ async function recordSelfGen(guildId, userId) {
   );
 }
 
-// ===== OPPONENT SALES HELPERS =====
+/* ================= OPPONENT SALES HELPERS ================= */
+
 async function ensureOpSalesRow(guildId, userId) {
   await run(
     `INSERT OR IGNORE INTO op_sales (guild_id, user_id, total_sales, self_gen, set_sales)
@@ -306,10 +320,12 @@ async function recordOpSelfGen(guildId, userId) {
   );
 }
 
-// ===== GYM HELPERS =====
+/* ================= GYM HELPERS ================= */
+
 async function ensureGymRow(guildId, userId) {
   await run(
-    `INSERT OR IGNORE INTO gym (guild_id, user_id, checkins) VALUES (?, ?, 0)`,
+    `INSERT OR IGNORE INTO gym (guild_id, user_id, checkins)
+     VALUES (?, ?, 0)`,
     [guildId, userId]
   );
 }
@@ -338,22 +354,28 @@ async function addGymDelta(guildId, userId, delta) {
   return next;
 }
 
-// ===== APPT HELPERS =====
+/* ================= APPT HELPERS ================= */
+
 async function addDailyAppt(guildId, userId, dateKey, delta) {
   await run(
-    `INSERT OR IGNORE INTO daily_appts (guild_id, date_key, user_id, count) VALUES (?, ?, ?, 0)`,
+    `INSERT OR IGNORE INTO daily_appts (guild_id, date_key, user_id, count)
+     VALUES (?, ?, ?, 0)`,
     [guildId, dateKey, userId]
   );
 
   const row = await get(
-    `SELECT count FROM daily_appts WHERE guild_id = ? AND date_key = ? AND user_id = ?`,
+    `SELECT count FROM daily_appts
+     WHERE guild_id = ? AND date_key = ? AND user_id = ?`,
     [guildId, dateKey, userId]
   );
+
   const current = row?.count ?? 0;
   const next = Math.max(0, current + delta);
 
   await run(
-    `UPDATE daily_appts SET count = ? WHERE guild_id = ? AND date_key = ? AND user_id = ?`,
+    `UPDATE daily_appts
+     SET count = ?
+     WHERE guild_id = ? AND date_key = ? AND user_id = ?`,
     [next, guildId, dateKey, userId]
   );
 
@@ -361,38 +383,44 @@ async function addDailyAppt(guildId, userId, dateKey, delta) {
 }
 
 async function dailyApptsLeaderboard(guildId, dateKey) {
-  return await all(
+  return all(
     `SELECT user_id, count
      FROM daily_appts
      WHERE guild_id = ? AND date_key = ?
-     ORDER BY count DESC`,
+     ORDER BY count DESC, user_id ASC`,
     [guildId, dateKey]
   );
 }
 
 async function clearDailyAppts(guildId, dateKey) {
-  await run(`DELETE FROM daily_appts WHERE guild_id = ? AND date_key = ?`, [
-    guildId,
-    dateKey,
-  ]);
+  await run(
+    `DELETE FROM daily_appts WHERE guild_id = ? AND date_key = ?`,
+    [guildId, dateKey]
+  );
 }
 
-// ===== OPPONENT APPT HELPERS =====
+/* ================= OPPONENT APPT HELPERS ================= */
+
 async function addOpDailyAppt(guildId, userId, dateKey, delta) {
   await run(
-    `INSERT OR IGNORE INTO op_daily_appts (guild_id, date_key, user_id, count) VALUES (?, ?, ?, 0)`,
+    `INSERT OR IGNORE INTO op_daily_appts (guild_id, date_key, user_id, count)
+     VALUES (?, ?, ?, 0)`,
     [guildId, dateKey, userId]
   );
 
   const row = await get(
-    `SELECT count FROM op_daily_appts WHERE guild_id = ? AND date_key = ? AND user_id = ?`,
+    `SELECT count FROM op_daily_appts
+     WHERE guild_id = ? AND date_key = ? AND user_id = ?`,
     [guildId, dateKey, userId]
   );
+
   const current = row?.count ?? 0;
   const next = Math.max(0, current + delta);
 
   await run(
-    `UPDATE op_daily_appts SET count = ? WHERE guild_id = ? AND date_key = ? AND user_id = ?`,
+    `UPDATE op_daily_appts
+     SET count = ?
+     WHERE guild_id = ? AND date_key = ? AND user_id = ?`,
     [next, guildId, dateKey, userId]
   );
 
@@ -400,18 +428,19 @@ async function addOpDailyAppt(guildId, userId, dateKey, delta) {
 }
 
 async function opDailyApptsLeaderboard(guildId, dateKey) {
-  return await all(
+  return all(
     `SELECT user_id, count
      FROM op_daily_appts
      WHERE guild_id = ? AND date_key = ?
-     ORDER BY count DESC`,
+     ORDER BY count DESC, user_id ASC`,
     [guildId, dateKey]
   );
 }
 
-// ---- Blitz meta
+/* ================= BLITZ HELPERS ================= */
+
 async function getActiveBlitz(guildId) {
-  return await get(
+  return get(
     `SELECT blitz_name, start_ts, end_ts, is_active
      FROM appt_blitz
      WHERE guild_id = ? AND is_active = 1
@@ -421,7 +450,7 @@ async function getActiveBlitz(guildId) {
 }
 
 async function getMostRecentEndedBlitz(guildId) {
-  return await get(
+  return get(
     `SELECT blitz_name, start_ts, end_ts
      FROM appt_blitz
      WHERE guild_id = ? AND is_active = 0 AND end_ts IS NOT NULL
@@ -433,17 +462,24 @@ async function getMostRecentEndedBlitz(guildId) {
 
 async function blitzExists(guildId, blitzName) {
   const row = await get(
-    `SELECT blitz_name FROM appt_blitz WHERE guild_id = ? AND blitz_name = ? LIMIT 1`,
+    `SELECT blitz_name
+     FROM appt_blitz
+     WHERE guild_id = ? AND blitz_name = ?
+     LIMIT 1`,
     [guildId, blitzName]
   );
   return !!row;
 }
 
 async function startBlitz(guildId, blitzName) {
-  if (await blitzExists(guildId, blitzName)) return { ok: false, reason: "exists" };
+  if (await blitzExists(guildId, blitzName)) {
+    return { ok: false, reason: "exists" };
+  }
 
   const active = await getActiveBlitz(guildId);
-  if (active) return { ok: false, reason: "active", activeName: active.blitz_name };
+  if (active) {
+    return { ok: false, reason: "active", activeName: active.blitz_name };
+  }
 
   const startTs = new Date().toISOString();
   await run(
@@ -451,6 +487,7 @@ async function startBlitz(guildId, blitzName) {
      VALUES (?, ?, ?, NULL, 1)`,
     [guildId, blitzName, startTs]
   );
+
   return { ok: true, blitzName, startTs };
 }
 
@@ -465,10 +502,10 @@ async function endBlitz(guildId) {
      WHERE guild_id = ? AND blitz_name = ?`,
     [endTs, guildId, active.blitz_name]
   );
+
   return { ok: true, blitzName: active.blitz_name, endTs };
 }
 
-// ---- Blitz appts
 async function addBlitzAppt(guildId, blitzName, dateKey, userId, delta) {
   await run(
     `INSERT OR IGNORE INTO blitz_appts (guild_id, blitz_name, date_key, user_id, count)
@@ -477,15 +514,18 @@ async function addBlitzAppt(guildId, blitzName, dateKey, userId, delta) {
   );
 
   const row = await get(
-    `SELECT count FROM blitz_appts
+    `SELECT count
+     FROM blitz_appts
      WHERE guild_id = ? AND blitz_name = ? AND date_key = ? AND user_id = ?`,
     [guildId, blitzName, dateKey, userId]
   );
+
   const current = row?.count ?? 0;
   const next = Math.max(0, current + delta);
 
   await run(
-    `UPDATE blitz_appts SET count = ?
+    `UPDATE blitz_appts
+     SET count = ?
      WHERE guild_id = ? AND blitz_name = ? AND date_key = ? AND user_id = ?`,
     [next, guildId, blitzName, dateKey, userId]
   );
@@ -494,7 +534,7 @@ async function addBlitzAppt(guildId, blitzName, dateKey, userId, delta) {
 }
 
 async function blitzApptsByDate(guildId, blitzName) {
-  return await all(
+  return all(
     `SELECT date_key, user_id, count
      FROM blitz_appts
      WHERE guild_id = ? AND blitz_name = ?
@@ -506,26 +546,27 @@ async function blitzApptsByDate(guildId, blitzName) {
 async function clearBlitzApptsTarget(guildId) {
   const active = await getActiveBlitz(guildId);
   if (active) {
-    await run(`DELETE FROM blitz_appts WHERE guild_id = ? AND blitz_name = ?`, [
-      guildId,
-      active.blitz_name,
-    ]);
+    await run(
+      `DELETE FROM blitz_appts WHERE guild_id = ? AND blitz_name = ?`,
+      [guildId, active.blitz_name]
+    );
     return { ok: true, blitzName: active.blitz_name, mode: "active" };
   }
 
   const recent = await getMostRecentEndedBlitz(guildId);
   if (recent) {
-    await run(`DELETE FROM blitz_appts WHERE guild_id = ? AND blitz_name = ?`, [
-      guildId,
-      recent.blitz_name,
-    ]);
+    await run(
+      `DELETE FROM blitz_appts WHERE guild_id = ? AND blitz_name = ?`,
+      [guildId, recent.blitz_name]
+    );
     return { ok: true, blitzName: recent.blitz_name, mode: "recent" };
   }
 
   return { ok: false, reason: "none" };
 }
 
-// ===== COMMAND PARSING HELPERS =====
+/* ================= PARSING HELPERS ================= */
+
 function parsePositiveInt(s) {
   if (!s) return null;
   const n = Number(s);
@@ -534,29 +575,8 @@ function parsePositiveInt(s) {
   return n;
 }
 
-function parseNonNegativeInt(s) {
-  if (!s) return null;
-  const n = Number(s);
-  if (!Number.isInteger(n)) return null;
-  if (n < 0) return null;
-  return n;
-}
+/* ================= MESSAGE HANDLER ================= */
 
-// ===== MESSAGE HANDLER =====
-
-// ===== MESSAGE DEDUPE HELPERS =====
-async function claimMessage(messageId) {
-  try {
-    await run(
-      `INSERT INTO processed_messages (message_id, created_at)
-       VALUES (?, ?)`,
-      [messageId, new Date().toISOString()]
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
 client.on("messageCreate", async (msg) => {
   try {
     if (!msg.guild) return;
@@ -565,7 +585,6 @@ client.on("messageCreate", async (msg) => {
     const content = (msg.content || "").trim();
     if (!content.startsWith(PREFIX)) return;
 
-    // DEDUPE: prevent processing the same Discord message twice
     const firstProcess = await claimMessage(msg.id);
     if (!firstProcess) return;
 
@@ -573,7 +592,8 @@ client.on("messageCreate", async (msg) => {
     const command = (parts.shift() || "").toLowerCase();
     const guildId = msg.guild.id;
 
-    // ===================== SALES =====================
+    /* ===== OUR SALES ===== */
+
     if (command === "setsale") {
       if (!canSetSale(msg.member)) {
         return msg.reply("❌ Only Leadership/Closer can use `!setsale`.");
@@ -581,7 +601,9 @@ client.on("messageCreate", async (msg) => {
 
       const target = msg.mentions.users.first();
       if (!target) return msg.reply("Usage: `!setsale @user`");
-      if (target.id === msg.author.id) return msg.reply("Use `!selfgen` for self-generated sales.");
+      if (target.id === msg.author.id) {
+        return msg.reply("Use `!selfgen` for self-generated sales.");
+      }
 
       await recordSetSale(guildId, msg.author.id, target.id);
 
@@ -597,6 +619,7 @@ client.on("messageCreate", async (msg) => {
       if (!canSetSale(msg.member)) {
         return msg.reply("❌ Only Leadership/Closer can use `!selfgen`.");
       }
+
       await recordSelfGen(guildId, msg.author.id);
       const name = msg.member?.displayName || msg.author.username;
       return msg.reply(`✅ Self-gen recorded for ${name}.`);
@@ -611,7 +634,9 @@ client.on("messageCreate", async (msg) => {
         [guildId]
       );
 
-      if (!rows.length) return msg.reply("**Sales Leaderboard**\n(No sales recorded yet.)");
+      if (!rows.length) {
+        return msg.reply("**Sales Leaderboard**\n(No sales recorded yet.)");
+      }
 
       const lines = [];
       for (let i = 0; i < rows.length; i++) {
@@ -627,18 +652,24 @@ client.on("messageCreate", async (msg) => {
     }
 
     if (command === "clearsales") {
-      if (!isLeadership(msg.member)) return msg.reply("❌ Only Leadership can use `!clearsales`.");
+      if (!isLeadership(msg.member)) {
+        return msg.reply("❌ Only Leadership can use `!clearsales`.");
+      }
+
       await run(`DELETE FROM sales WHERE guild_id = ?`, [guildId]);
       return msg.reply("🧹 Sales leaderboard cleared.");
     }
 
-    // ===================== OPPONENT SALES =====================
+    /* ===== OPPONENT SALES ===== */
+
     if (command === "opsale") {
       if (!canUseOpponent(msg.member)) return;
 
       const target = msg.mentions.users.first();
       if (!target) return msg.reply("Usage: `!opsale @user`");
-      if (target.id === msg.author.id) return msg.reply("Use `!opselfgen` for self-generated opponent sales.");
+      if (target.id === msg.author.id) {
+        return msg.reply("Use `!opselfgen` for self-generated opponent sales.");
+      }
 
       await recordOpSetSale(guildId, msg.author.id, target.id);
 
@@ -654,7 +685,6 @@ client.on("messageCreate", async (msg) => {
       if (!canUseOpponent(msg.member)) return;
 
       await recordOpSelfGen(guildId, msg.author.id);
-
       const name = msg.member?.displayName || msg.author.username;
       return msg.reply(`🔥 Opponent self-gen recorded for ${name}.`);
     }
@@ -670,7 +700,9 @@ client.on("messageCreate", async (msg) => {
         [guildId]
       );
 
-      if (!rows.length) return msg.reply("**Opponent Sales Leaderboard**\n(No sales yet)");
+      if (!rows.length) {
+        return msg.reply("**Opponent Sales Leaderboard**\n(No sales yet)");
+      }
 
       const lines = [];
       for (let i = 0; i < rows.length; i++) {
@@ -685,10 +717,11 @@ client.on("messageCreate", async (msg) => {
     }
 
     if (command === "clearopsales") {
-      if (!isLeadership(msg.member)) return msg.reply("❌ Only Leadership can use this command");
+      if (!isLeadership(msg.member)) {
+        return msg.reply("❌ Only Leadership can use this command");
+      }
 
       await run(`DELETE FROM op_sales WHERE guild_id = ?`, [guildId]);
-
       return msg.reply("🧹 Opponent sales leaderboard cleared.");
     }
 
@@ -712,7 +745,6 @@ client.on("messageCreate", async (msg) => {
       let output = "**🔥 Competition Sales Leaderboard**\n\n";
 
       output += "**Solrite Team**\n";
-
       if (!ourSales.length) {
         output += "(No sales yet)\n";
       } else {
@@ -724,7 +756,6 @@ client.on("messageCreate", async (msg) => {
       }
 
       output += "\n**Opponent Team**\n";
-
       if (!opSales.length) {
         output += "(No sales yet)";
       } else {
@@ -737,214 +768,13 @@ client.on("messageCreate", async (msg) => {
 
       return msg.reply(output.slice(0, 1900));
     }
-// ===================== COMP APPOINTMENTS =====================
-if (command === "compappts") {
 
-  const dateKey = ctDateKey();
+    /* ===== OUR APPTS ===== */
 
-  const ourAppts = await all(
-    `SELECT user_id, count
-     FROM daily_appts
-     WHERE guild_id = ? AND date_key = ?
-     ORDER BY count DESC`,
-    [guildId, dateKey]
-  );
-
-  const opAppts = await all(
-    `SELECT user_id, count
-     FROM op_daily_appts
-     WHERE guild_id = ? AND date_key = ?
-     ORDER BY count DESC`,
-    [guildId, dateKey]
-  );
-
-  let output = `📅 Competition Appointments — ${dateKey}\n\n`;
-
-  output += "**Solrite Team**\n";
-
-  if (!ourAppts.length) {
-    output += "(No appointments)\n";
-  } else {
-    for (let i = 0; i < ourAppts.length; i++) {
-      const r = ourAppts[i];
-      const name = await displayNameFor(msg.guild, r.user_id);
-      output += `${i + 1}. ${name} — ${r.count}\n`;
-    }
-  }
-
-  output += "\n**Opponent Team**\n";
-
-  if (!opAppts.length) {
-    output += "(No appointments)";
-  } else {
-    for (let i = 0; i < opAppts.length; i++) {
-      const r = opAppts[i];
-      const name = await displayNameFor(msg.guild, r.user_id);
-      output += `${i + 1}. ${name} — ${r.count}\n`;
-    }
-  }
-
-  return msg.reply(output.slice(0, 1900));
-}
-// ===================== COMP OVERALL =====================
-if (command === "comp") {
-  const dateKey = ctDateKey();
-
-  const ourSalesRows = await all(
-    `SELECT total_sales
-     FROM sales
-     WHERE guild_id = ?`,
-    [guildId]
-  );
-
-  const opSalesRows = await all(
-    `SELECT total_sales
-     FROM op_sales
-     WHERE guild_id = ?`,
-    [guildId]
-  );
-
-  const ourApptRows = await all(
-    `SELECT count
-     FROM daily_appts
-     WHERE guild_id = ? AND date_key = ?`,
-    [guildId, dateKey]
-  );
-
-  const opApptRows = await all(
-    `SELECT count
-     FROM op_daily_appts
-     WHERE guild_id = ? AND date_key = ?`,
-    [guildId, dateKey]
-  );
-
-  const ourSalesTotal = ourSalesRows.reduce((sum, r) => sum + (r.total_sales || 0), 0);
-  const opSalesTotal = opSalesRows.reduce((sum, r) => sum + (r.total_sales || 0), 0);
-
-  const ourApptsTotal = ourApptRows.reduce((sum, r) => sum + (r.count || 0), 0);
-  const opApptsTotal = opApptRows.reduce((sum, r) => sum + (r.count || 0), 0);
-
-  const ourTotal = ourSalesTotal + ourApptsTotal;
-  const opTotal = opSalesTotal + opApptsTotal;
-
-  let winnerLine = "🤝 It is currently tied.";
-
-  if (ourTotal > opTotal) {
-    winnerLine = `🏆 Solrite is winning by ${ourTotal - opTotal}`;
-  } else if (opTotal > ourTotal) {
-    winnerLine = `🏆 Opponent is winning by ${opTotal - ourTotal}`;
-  }
-
-  const output = `🔥 **Blitz Score**
-
-**Solrite**
-Sales: ${ourSalesTotal}
-Appts: ${ourApptsTotal}
-Total: ${ourTotal}
-
-**Opponent**
-Sales: ${opSalesTotal}
-Appts: ${opApptsTotal}
-Total: ${opTotal}
-
-${winnerLine}`;
-
-  return msg.reply(output);
-}
-
-    // ===================== GYM =====================
-    // !gym
-    // - no mention: self +1
-    // - mention: leadership adds to mentioned user (default +1, optional #)
-    if (command === "gym") {
-      const mentioned = msg.mentions.users.first();
-
-      if (!mentioned) {
-        // self +1
-        const next = await addGymDelta(guildId, msg.author.id, +1);
-        const name = msg.member?.displayName || msg.author.username;
-        return msg.reply(`🏋️ Gym check-in logged for ${name}. Total: ${next}`);
-      }
-
-      // mention present => leadership-only admin add
-      if (!isLeadership(msg.member)) {
-        return msg.reply("❌ Only Leadership can use `!gym @user`.");
-      }
-
-      // number argument is the first token after mention (if any)
-      const maybeNum = parts.find((p) => /^[0-9]+$/.test(p));
-      const amount = parsePositiveInt(maybeNum) ?? 1;
-
-      const next = await addGymDelta(guildId, mentioned.id, +amount);
-      const targetName = await displayNameFor(msg.guild, mentioned.id);
-
-      return msg.reply(`✅ Added ${amount} gym check-in${amount === 1 ? "" : "s"} to ${targetName}. Total: ${next}`);
-    }
-
-    // !removegym
-    // - no mention: self remove (default 1, optional #), anyone can use
-    // - mention: leadership remove from mentioned (default 1, optional #)
-    if (command === "removegym") {
-      const mentioned = msg.mentions.users.first();
-
-      if (!mentioned) {
-        // self remove
-        const maybeNum = parts.find((p) => /^[0-9]+$/.test(p));
-        const amount = parsePositiveInt(maybeNum) ?? 1;
-
-        const next = await addGymDelta(guildId, msg.author.id, -amount);
-        const name = msg.member?.displayName || msg.author.username;
-
-        return msg.reply(`✅ Removed ${amount} gym check-in${amount === 1 ? "" : "s"} from ${name}. Total: ${next}`);
-      }
-
-      // remove from mentioned user (leadership-only)
-      if (!isLeadership(msg.member)) {
-        return msg.reply("❌ Only Leadership can use `!removegym @user`.");
-      }
-
-      const maybeNum = parts.find((p) => /^[0-9]+$/.test(p));
-      const amount = parsePositiveInt(maybeNum) ?? 1;
-
-      const next = await addGymDelta(guildId, mentioned.id, -amount);
-      const targetName = await displayNameFor(msg.guild, mentioned.id);
-
-      return msg.reply(`✅ Removed ${amount} gym check-in${amount === 1 ? "" : "s"} from ${targetName}. Total: ${next}`);
-    }
-
-    if (command === "gymrank") {
-      const rows = await all(
-        `SELECT user_id, checkins
-         FROM gym
-         WHERE guild_id = ?
-         ORDER BY checkins DESC`,
-        [guildId]
-      );
-
-      if (!rows.length) return msg.reply("**Gym Leaderboard**\n(No check-ins yet.)");
-
-      const lines = [];
-      for (let i = 0; i < rows.length; i++) {
-        const r = rows[i];
-        const name = await displayNameFor(msg.guild, r.user_id);
-        lines.push(`${i + 1}. ${name}: ${r.checkins} check-ins`);
-      }
-
-      return msg.reply(`**Gym Leaderboard**\n${lines.join("\n")}`.slice(0, 1900));
-    }
-
-    if (command === "cleargym") {
-      if (!isLeadership(msg.member)) return msg.reply("❌ Only Leadership can use `!cleargym`.");
-      await run(`DELETE FROM gym WHERE guild_id = ?`, [guildId]);
-      return msg.reply("🧹 Gym leaderboard cleared.");
-    }
-
-    // ===================== DAILY APPTS =====================
     if (command === "setappt") {
       const dateKey = ctDateKey();
       const newCount = await addDailyAppt(guildId, msg.author.id, dateKey, +1);
 
-      // also add to active blitz (if exists)
       const active = await getActiveBlitz(guildId);
       if (active) {
         await addBlitzAppt(guildId, active.blitz_name, dateKey, msg.author.id, +1);
@@ -959,7 +789,9 @@ ${winnerLine}`;
       const rows = await dailyApptsLeaderboard(guildId, dateKey);
 
       const header = `📅 Daily Appointments — ${dateKey} (CT)`;
-      if (!rows.length) return msg.reply(`${header}\n(No appointments yet today.)`);
+      if (!rows.length) {
+        return msg.reply(`${header}\n(No appointments yet today.)`);
+      }
 
       const lines = [];
       for (let i = 0; i < rows.length; i++) {
@@ -972,27 +804,26 @@ ${winnerLine}`;
     }
 
     if (command === "cleardailyappts") {
-      if (!isLeadership(msg.member)) return msg.reply("❌ Only Leadership can use `!cleardailyappts`.");
+      if (!isLeadership(msg.member)) {
+        return msg.reply("❌ Only Leadership can use `!cleardailyappts`.");
+      }
+
       const dateKey = ctDateKey();
       await clearDailyAppts(guildId, dateKey);
       return msg.reply("🧹 Daily appointments cleared for today (CT).");
     }
 
-    // !removeappt or !removeappt @user
     if (command === "removeappt") {
       const dateKey = ctDateKey();
-
       const mentioned = msg.mentions.users.first();
       const targetUserId = mentioned ? mentioned.id : msg.author.id;
 
-      // if mention is used, only leadership can do it
       if (mentioned && !isLeadership(msg.member)) {
         return msg.reply("❌ Only Leadership can use `!removeappt @user`.");
       }
 
       const newCount = await addDailyAppt(guildId, targetUserId, dateKey, -1);
 
-      // also subtract from active blitz only (if exists)
       const active = await getActiveBlitz(guildId);
       if (active) {
         await addBlitzAppt(guildId, active.blitz_name, dateKey, targetUserId, -1);
@@ -1005,7 +836,8 @@ ${winnerLine}`;
       return msg.reply(`✅ Removed 1 appointment from ${name}. Today: ${newCount}`);
     }
 
-    // ===================== OPPONENT DAILY APPTS =====================
+    /* ===== OPPONENT APPTS ===== */
+
     if (command === "opsetappt") {
       if (!canUseOpponent(msg.member)) return;
 
@@ -1023,7 +855,9 @@ ${winnerLine}`;
       const rows = await opDailyApptsLeaderboard(guildId, dateKey);
 
       const header = `Opponent Appointments — ${dateKey}`;
-      if (!rows.length) return msg.reply(`${header}\n(No appointments today)`);
+      if (!rows.length) {
+        return msg.reply(`${header}\n(No appointments today)`);
+      }
 
       const lines = [];
       for (let i = 0; i < rows.length; i++) {
@@ -1036,10 +870,11 @@ ${winnerLine}`;
     }
 
     if (command === "clearopappts") {
-      if (!isLeadership(msg.member)) return msg.reply("❌ Only Leadership can use this command");
+      if (!isLeadership(msg.member)) {
+        return msg.reply("❌ Only Leadership can use this command");
+      }
 
       const dateKey = ctDateKey();
-
       await run(
         `DELETE FROM op_daily_appts
          WHERE guild_id = ? AND date_key = ?`,
@@ -1049,9 +884,111 @@ ${winnerLine}`;
       return msg.reply("🧹 Opponent daily appointments cleared.");
     }
 
-    // ===================== BLITZ APPTS =====================
+    if (command === "compappts") {
+      const dateKey = ctDateKey();
+
+      const ourAppts = await all(
+        `SELECT user_id, count
+         FROM daily_appts
+         WHERE guild_id = ? AND date_key = ?
+         ORDER BY count DESC`,
+        [guildId, dateKey]
+      );
+
+      const opAppts = await all(
+        `SELECT user_id, count
+         FROM op_daily_appts
+         WHERE guild_id = ? AND date_key = ?
+         ORDER BY count DESC`,
+        [guildId, dateKey]
+      );
+
+      let output = `📅 Competition Appointments — ${dateKey}\n\n`;
+
+      output += "**Solrite Team**\n";
+      if (!ourAppts.length) {
+        output += "(No appointments)\n";
+      } else {
+        for (let i = 0; i < ourAppts.length; i++) {
+          const r = ourAppts[i];
+          const name = await displayNameFor(msg.guild, r.user_id);
+          output += `${i + 1}. ${name} — ${r.count}\n`;
+        }
+      }
+
+      output += "\n**Opponent Team**\n";
+      if (!opAppts.length) {
+        output += "(No appointments)";
+      } else {
+        for (let i = 0; i < opAppts.length; i++) {
+          const r = opAppts[i];
+          const name = await displayNameFor(msg.guild, r.user_id);
+          output += `${i + 1}. ${name} — ${r.count}\n`;
+        }
+      }
+
+      return msg.reply(output.slice(0, 1900));
+    }
+
+    if (command === "comp") {
+      const dateKey = ctDateKey();
+
+      const ourSalesRows = await all(
+        `SELECT total_sales FROM sales WHERE guild_id = ?`,
+        [guildId]
+      );
+      const opSalesRows = await all(
+        `SELECT total_sales FROM op_sales WHERE guild_id = ?`,
+        [guildId]
+      );
+      const ourApptRows = await all(
+        `SELECT count FROM daily_appts WHERE guild_id = ? AND date_key = ?`,
+        [guildId, dateKey]
+      );
+      const opApptRows = await all(
+        `SELECT count FROM op_daily_appts WHERE guild_id = ? AND date_key = ?`,
+        [guildId, dateKey]
+      );
+
+      const ourSalesTotal = ourSalesRows.reduce((sum, r) => sum + (r.total_sales || 0), 0);
+      const opSalesTotal = opSalesRows.reduce((sum, r) => sum + (r.total_sales || 0), 0);
+      const ourApptsTotal = ourApptRows.reduce((sum, r) => sum + (r.count || 0), 0);
+      const opApptsTotal = opApptRows.reduce((sum, r) => sum + (r.count || 0), 0);
+
+      const ourTotal = ourSalesTotal + ourApptsTotal;
+      const opTotal = opSalesTotal + opApptsTotal;
+
+      let winnerLine = "🤝 It is currently tied.";
+      if (ourTotal > opTotal) {
+        winnerLine = `🏆 Solrite is winning by ${ourTotal - opTotal}`;
+      } else if (opTotal > ourTotal) {
+        winnerLine = `🏆 Opponent is winning by ${opTotal - ourTotal}`;
+      }
+
+      const output = `🔥 **Blitz Score**
+
+**Solrite**
+Sales: ${ourSalesTotal}
+Appts: ${ourApptsTotal}
+Total: ${ourTotal}
+
+**Opponent**
+Sales: ${opSalesTotal}
+Appts: ${opApptsTotal}
+Total: ${opTotal}
+
+${winnerLine}`;
+
+      return msg.reply(output);
+    }
+
+    /* ===== BLITZ ===== */
+
     if (command === "startappts") {
-      if (!isLeadership(msg.member)) return msg.reply("❌ Only Leadership can use `!startappts`.");
+      if (!isLeadership(msg.member)) {
+        return msg.reply("❌ Only Leadership can use `!startappts`.");
+      }
+
       const blitzName = (parts.join(" ") || "").trim();
       if (!blitzName) return msg.reply("Usage: `!startappts <blitz_name>`");
 
@@ -1067,7 +1004,9 @@ ${winnerLine}`;
     }
 
     if (command === "endappts") {
-      if (!isLeadership(msg.member)) return msg.reply("❌ Only Leadership can use `!endappts`.");
+      if (!isLeadership(msg.member)) {
+        return msg.reply("❌ Only Leadership can use `!endappts`.");
+      }
 
       const result = await endBlitz(guildId);
       if (!result.ok) return msg.reply("⚠️ No active blitz to end.");
@@ -1077,7 +1016,6 @@ ${winnerLine}`;
       );
     }
 
-    // !blitzappts or !blitzappts <id>
     if (command === "blitzappts") {
       const argName = (parts.join(" ") || "").trim();
 
@@ -1098,9 +1036,10 @@ ${winnerLine}`;
       const rows = await blitzApptsByDate(guildId, blitz.blitz_name);
       const title = `📊 Blitz Appointments — **${blitz.blitz_name}** (${isActive ? "ACTIVE" : "ENDED"})`;
 
-      if (!rows.length) return msg.reply(`${title}\n(No appointments recorded for this blitz.)`);
+      if (!rows.length) {
+        return msg.reply(`${title}\n(No appointments recorded for this blitz.)`);
+      }
 
-      // Group by date_key
       const byDate = new Map();
       for (const r of rows) {
         if (!byDate.has(r.date_key)) byDate.set(r.date_key, []);
@@ -1109,9 +1048,15 @@ ${winnerLine}`;
 
       let out = `${title}\n`;
       const dates = Array.from(byDate.keys()).sort();
+
       for (const dateKey of dates) {
-        const list = byDate.get(dateKey).slice().sort((a, b) => (b.count || 0) - (a.count || 0));
+        const list = byDate
+          .get(dateKey)
+          .slice()
+          .sort((a, b) => (b.count || 0) - (a.count || 0));
+
         out += `\n**${dateKey} (CT)**\n`;
+
         for (let i = 0; i < list.length; i++) {
           const r = list[i];
           const name = await displayNameFor(msg.guild, r.user_id);
@@ -1127,7 +1072,9 @@ ${winnerLine}`;
     }
 
     if (command === "clearblitzappts") {
-      if (!isLeadership(msg.member)) return msg.reply("❌ Only Leadership can use `!clearblitzappts`.");
+      if (!isLeadership(msg.member)) {
+        return msg.reply("❌ Only Leadership can use `!clearblitzappts`.");
+      }
 
       const result = await clearBlitzApptsTarget(guildId);
       if (!result.ok) return msg.reply("⚠️ No blitz data to clear.");
@@ -1135,10 +1082,98 @@ ${winnerLine}`;
       if (result.mode === "active") {
         return msg.reply(`🧹 Cleared blitz appointments for active blitz: **${result.blitzName}**`);
       }
+
       return msg.reply(`🧹 Cleared blitz appointments for most recent ended blitz: **${result.blitzName}**`);
     }
 
-    // Unknown command: do nothing
+    /* ===== GYM ===== */
+
+    if (command === "gym") {
+      const mentioned = msg.mentions.users.first();
+
+      if (!mentioned) {
+        const next = await addGymDelta(guildId, msg.author.id, +1);
+        const name = msg.member?.displayName || msg.author.username;
+        return msg.reply(`🏋️ Gym check-in logged for ${name}. Total: ${next}`);
+      }
+
+      if (!isLeadership(msg.member)) {
+        return msg.reply("❌ Only Leadership can use `!gym @user`.");
+      }
+
+      const maybeNum = parts.find((p) => /^[0-9]+$/.test(p));
+      const amount = parsePositiveInt(maybeNum) ?? 1;
+
+      const next = await addGymDelta(guildId, mentioned.id, +amount);
+      const targetName = await displayNameFor(msg.guild, mentioned.id);
+
+      return msg.reply(
+        `✅ Added ${amount} gym check-in${amount === 1 ? "" : "s"} to ${targetName}. Total: ${next}`
+      );
+    }
+
+    if (command === "removegym") {
+      const mentioned = msg.mentions.users.first();
+
+      if (!mentioned) {
+        const maybeNum = parts.find((p) => /^[0-9]+$/.test(p));
+        const amount = parsePositiveInt(maybeNum) ?? 1;
+
+        const next = await addGymDelta(guildId, msg.author.id, -amount);
+        const name = msg.member?.displayName || msg.author.username;
+
+        return msg.reply(
+          `✅ Removed ${amount} gym check-in${amount === 1 ? "" : "s"} from ${name}. Total: ${next}`
+        );
+      }
+
+      if (!isLeadership(msg.member)) {
+        return msg.reply("❌ Only Leadership can use `!removegym @user`.");
+      }
+
+      const maybeNum = parts.find((p) => /^[0-9]+$/.test(p));
+      const amount = parsePositiveInt(maybeNum) ?? 1;
+
+      const next = await addGymDelta(guildId, mentioned.id, -amount);
+      const targetName = await displayNameFor(msg.guild, mentioned.id);
+
+      return msg.reply(
+        `✅ Removed ${amount} gym check-in${amount === 1 ? "" : "s"} from ${targetName}. Total: ${next}`
+      );
+    }
+
+    if (command === "gymrank") {
+      const rows = await all(
+        `SELECT user_id, checkins
+         FROM gym
+         WHERE guild_id = ?
+         ORDER BY checkins DESC`,
+        [guildId]
+      );
+
+      if (!rows.length) {
+        return msg.reply("**Gym Leaderboard**\n(No check-ins yet.)");
+      }
+
+      const lines = [];
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const name = await displayNameFor(msg.guild, r.user_id);
+        lines.push(`${i + 1}. ${name}: ${r.checkins} check-ins`);
+      }
+
+      return msg.reply(`**Gym Leaderboard**\n${lines.join("\n")}`.slice(0, 1900));
+    }
+
+    if (command === "cleargym") {
+      if (!isLeadership(msg.member)) {
+        return msg.reply("❌ Only Leadership can use `!cleargym`.");
+      }
+
+      await run(`DELETE FROM gym WHERE guild_id = ?`, [guildId]);
+      return msg.reply("🧹 Gym leaderboard cleared.");
+    }
+
     return;
   } catch (err) {
     console.error("Command error:", err);
@@ -1148,9 +1183,13 @@ ${winnerLine}`;
   }
 });
 
-client.once("ready", async () => {
+/* ================= READY ================= */
+
+client.once("clientReady", async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
 });
+
+/* ================= START ================= */
 
 (async () => {
   await initDb();
