@@ -188,6 +188,14 @@ async function initDb() {
     )
   `);
 
+  // MESSAGE DEDUPE
+  await run(`
+    CREATE TABLE IF NOT EXISTS processed_messages (
+      message_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL
+    )
+  `);
+
   // OPPONENT SALES
   await run(`
     CREATE TABLE IF NOT EXISTS op_sales (
@@ -542,6 +550,10 @@ client.on("messageCreate", async (msg) => {
 
     const content = (msg.content || "").trim();
     if (!content.startsWith(PREFIX)) return;
+
+    // DEDUPE: prevent processing the same Discord message twice
+    const firstProcess = await claimMessage(msg.id);
+    if (!firstProcess) return;
 
     const parts = content.slice(PREFIX.length).trim().split(/\s+/);
     const command = (parts.shift() || "").toLowerCase();
