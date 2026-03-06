@@ -711,6 +711,55 @@ client.on("messageCreate", async (msg) => {
 
       return msg.reply(output.slice(0, 1900));
     }
+// ===================== COMP APPOINTMENTS =====================
+if (command === "compappts") {
+
+  const dateKey = ctDateKey();
+
+  const ourAppts = await all(
+    `SELECT user_id, count
+     FROM daily_appts
+     WHERE guild_id = ? AND date_key = ?
+     ORDER BY count DESC`,
+    [guildId, dateKey]
+  );
+
+  const opAppts = await all(
+    `SELECT user_id, count
+     FROM op_daily_appts
+     WHERE guild_id = ? AND date_key = ?
+     ORDER BY count DESC`,
+    [guildId, dateKey]
+  );
+
+  let output = `📅 Competition Appointments — ${dateKey}\n\n`;
+
+  output += "**Solrite Team**\n";
+
+  if (!ourAppts.length) {
+    output += "(No appointments)\n";
+  } else {
+    for (let i = 0; i < ourAppts.length; i++) {
+      const r = ourAppts[i];
+      const name = await displayNameFor(msg.guild, r.user_id);
+      output += `${i + 1}. ${name} — ${r.count}\n`;
+    }
+  }
+
+  output += "\n**Opponent Team**\n";
+
+  if (!opAppts.length) {
+    output += "(No appointments)";
+  } else {
+    for (let i = 0; i < opAppts.length; i++) {
+      const r = opAppts[i];
+      const name = await displayNameFor(msg.guild, r.user_id);
+      output += `${i + 1}. ${name} — ${r.count}\n`;
+    }
+  }
+
+  return msg.reply(output.slice(0, 1900));
+}
 
     // ===================== GYM =====================
     // !gym
