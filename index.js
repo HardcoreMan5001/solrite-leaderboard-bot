@@ -726,22 +726,22 @@ client.on("messageCreate", async (msg) => {
     }
 
     if (command === "compsales") {
-      const ourSales = await all(
-        `SELECT user_id, total_sales
-         FROM sales
-         WHERE guild_id = ?
-         ORDER BY total_sales DESC`,
-        [guildId]
-      );
-
-      const opSales = await all(
-        `SELECT user_id, total_sales
-         FROM op_sales
-         WHERE guild_id = ?
-         ORDER BY total_sales DESC`,
-        [guildId]
-      );
-
+const ourSales = await all(
+  `SELECT user_id, total_sales, self_gen, set_sales,
+          (total_sales - set_sales + self_gen) AS comp_sales
+   FROM sales
+   WHERE guild_id = ?
+   ORDER BY comp_sales DESC, total_sales DESC`,
+  [guildId]
+);
+const opSales = await all(
+  `SELECT user_id, total_sales, self_gen, set_sales,
+          (total_sales - set_sales + self_gen) AS comp_sales
+   FROM op_sales
+   WHERE guild_id = ?
+   ORDER BY comp_sales DESC, total_sales DESC`,
+  [guildId]
+);
       let output = "**🔥 Competition Sales Leaderboard**\n\n";
 
       output += "**Solrite Team**\n";
@@ -751,7 +751,7 @@ client.on("messageCreate", async (msg) => {
         for (let i = 0; i < ourSales.length; i++) {
           const r = ourSales[i];
           const name = await displayNameFor(msg.guild, r.user_id);
-          output += `${i + 1}. ${name} — ${r.total_sales}\n`;
+          output += `${i + 1}. ${name} — ${r.comp_sales}\n`
         }
       }
 
@@ -933,14 +933,18 @@ client.on("messageCreate", async (msg) => {
     if (command === "comp") {
       const dateKey = ctDateKey();
 
-      const ourSalesRows = await all(
-        `SELECT total_sales FROM sales WHERE guild_id = ?`,
-        [guildId]
-      );
-      const opSalesRows = await all(
-        `SELECT total_sales FROM op_sales WHERE guild_id = ?`,
-        [guildId]
-      );
+const ourSalesRows = await all(
+  `SELECT total_sales, self_gen, set_sales
+   FROM sales
+   WHERE guild_id = ?`,
+  [guildId]
+);
+const opSalesRows = await all(
+  `SELECT total_sales, self_gen, set_sales
+   FROM op_sales
+   WHERE guild_id = ?`,
+  [guildId]
+);
       const ourApptRows = await all(
         `SELECT count FROM daily_appts WHERE guild_id = ? AND date_key = ?`,
         [guildId, dateKey]
@@ -950,8 +954,14 @@ client.on("messageCreate", async (msg) => {
         [guildId, dateKey]
       );
 
-      const ourSalesTotal = ourSalesRows.reduce((sum, r) => sum + (r.total_sales || 0), 0);
-      const opSalesTotal = opSalesRows.reduce((sum, r) => sum + (r.total_sales || 0), 0);
+      const ourSalesTotal = ourSalesRows.reduce(
+  (sum, r) => sum + ((r.total_sales || 0) - (r.set_sales || 0) + (r.self_gen || 0)),
+  0
+);
+const opSalesTotal = opSalesRows.reduce(
+  (sum, r) => sum + ((r.total_sales || 0) - (r.set_sales || 0) + (r.self_gen || 0)),
+  0
+);
       const ourApptsTotal = ourApptRows.reduce((sum, r) => sum + (r.count || 0), 0);
       const opApptsTotal = opApptRows.reduce((sum, r) => sum + (r.count || 0), 0);
 
