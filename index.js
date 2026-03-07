@@ -1022,51 +1022,51 @@ client.on("messageCreate", async (msg) => {
       return msg.reply("🧹 Opponent sales leaderboard cleared.");
     }
 
-    if (command === "compsales") {
-      const ourSales = await all(
-        `SELECT user_id, total_sales, self_gen, set_sales,
-                (total_sales - set_sales + self_gen) AS comp_sales
-         FROM sales
-         WHERE guild_id = ?
-         ORDER BY comp_sales DESC, total_sales DESC`,
-        [guildId]
-      );
+if (command === "compsales") {
+  const ourSales = await all(
+    `SELECT user_id, total_sales, self_gen, set_sales
+     FROM sales
+     WHERE guild_id = ?
+     ORDER BY total_sales DESC, self_gen DESC, set_sales DESC`,
+    [guildId]
+  );
 
-      const opSales = await all(
-        `SELECT user_id, total_sales, self_gen, set_sales,
-                (total_sales - set_sales + self_gen) AS comp_sales
-         FROM op_sales
-         WHERE guild_id = ?
-         ORDER BY comp_sales DESC, total_sales DESC`,
-        [guildId]
-      );
+  const opSales = await all(
+    `SELECT user_id, total_sales, self_gen, set_sales
+     FROM op_sales
+     WHERE guild_id = ?
+     ORDER BY total_sales DESC, self_gen DESC, set_sales DESC`,
+    [guildId]
+  );
 
-      let output = "**🔥 Competition Sales Leaderboard**\n\n";
+  let output = "**🔥 Competition Sales Leaderboard**\n\n";
 
-      output += "**Solrite Team**\n";
-      if (!ourSales.length) {
-        output += "(No sales yet)\n";
-      } else {
-        for (let i = 0; i < ourSales.length; i++) {
-          const r = ourSales[i];
-          const name = await displayNameFor(msg.guild, r.user_id);
-          output += `${i + 1}. ${name} — ${r.comp_sales}\n`;
-        }
-      }
-
-      output += "\n**Opponent Team**\n";
-      if (!opSales.length) {
-        output += "(No sales yet)";
-      } else {
-        for (let i = 0; i < opSales.length; i++) {
-          const r = opSales[i];
-          const name = await displayNameFor(msg.guild, r.user_id);
-          output += `${i + 1}. ${name} — ${r.comp_sales}\n`;
-        }
-      }
-
-      return msg.reply(output.slice(0, 1900));
+  output += "**Solrite Team**\n";
+  if (!ourSales.length) {
+    output += "(No sales yet)\n";
+  } else {
+    for (let i = 0; i < ourSales.length; i++) {
+      const r = ourSales[i];
+      const name = await displayNameFor(msg.guild, r.user_id);
+      const t = r.total_sales || 0;
+      output += `${i + 1}. ${name}: ${t} sale${t === 1 ? "" : "s"} (Self-gen: ${r.self_gen || 0}, Set: ${r.set_sales || 0})\n`;
     }
+  }
+
+  output += "\n**Opponent Team**\n";
+  if (!opSales.length) {
+    output += "(No sales yet)";
+  } else {
+    for (let i = 0; i < opSales.length; i++) {
+      const r = opSales[i];
+      const name = await displayNameFor(msg.guild, r.user_id);
+      const t = r.total_sales || 0;
+      output += `${i + 1}. ${name}: ${t} sale${t === 1 ? "" : "s"} (Self-gen: ${r.self_gen || 0}, Set: ${r.set_sales || 0})\n`;
+    }
+  }
+
+  return msg.reply(output.slice(0, 1900));
+}
 
     /* ===== OUR APPTS ===== */
 
@@ -1280,31 +1280,17 @@ client.on("messageCreate", async (msg) => {
       const ourApptsTotal = ourApptRows.reduce((sum, r) => sum + (r.count || 0), 0);
       const opApptsTotal = opApptRows.reduce((sum, r) => sum + (r.count || 0), 0);
 
-      const ourTotal = ourSalesTotal + ourApptsTotal;
-      const opTotal = opSalesTotal + opApptsTotal;
-
-      let winnerLine = "🤝 It is currently tied.";
-      if (ourTotal > opTotal) {
-        winnerLine = `🏆 Solrite is winning by ${ourTotal - opTotal}`;
-      } else if (opTotal > ourTotal) {
-        winnerLine = `🏆 Opponent is winning by ${opTotal - ourTotal}`;
-      }
-
-      const output = `🔥 **Blitz Score**
+const output = `🔥 **Blitz Score**
 
 **Solrite**
 Sales: ${ourSalesTotal}
 Appts: ${ourApptsTotal}
-Total: ${ourTotal}
 
 **Opponent**
 Sales: ${opSalesTotal}
-Appts: ${opApptsTotal}
-Total: ${opTotal}
+Appts: ${opApptsTotal}`;
 
-${winnerLine}`;
-
-      return msg.reply(output);
+return msg.reply(output);
     }
 
     /* ===== BLITZ ===== */
