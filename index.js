@@ -1327,60 +1327,76 @@ return msg.reply(output);
       );
     }
 
-    if (command === "blitzappts") {
-      const argName = (parts.join(" ") || "").trim();
+if (command === "blitzappts") {
+  const argName = (parts.join(" ") || "").trim();
 
-      let blitz = null;
-      if (argName) {
-        const exists = await blitzExists(guildId, argName);
-        if (!exists) return msg.reply(`⚠️ No blitz found with ID: **${argName}**`);
-        blitz = { blitz_name: argName };
-      } else {
-        blitz = await getActiveBlitz(guildId);
-        if (!blitz) blitz = await getMostRecentEndedBlitz(guildId);
-        if (!blitz) return msg.reply("⚠️ No blitz data found yet.");
-      }
+  let blitz = null;
+  if (argName) {
+    const exists = await blitzExists(guildId, argName);
+    if (!exists) return msg.reply(`⚠️ No blitz found with ID: **${argName}**`);
+    blitz = { blitz_name: argName };
+  } else {
+    blitz = await getActiveBlitz(guildId);
+    if (!blitz) blitz = await getMostRecentEndedBlitz(guildId);
+    if (!blitz) return msg.reply("⚠️ No blitz data found yet.");
+  }
 
-      const active = await getActiveBlitz(guildId);
-      const isActive = active && active.blitz_name === blitz.blitz_name;
+  const active = await getActiveBlitz(guildId);
+  const isActive = active && active.blitz_name === blitz.blitz_name;
 
-      const rows = await blitzApptsByDate(guildId, blitz.blitz_name);
-      const title = `📊 Blitz Appointments — **${blitz.blitz_name}** (${isActive ? "ACTIVE" : "ENDED"})`;
+  const rows = await blitzApptsByDate(guildId, blitz.blitz_name);
+  const title = `📊 Blitz Appointments — **${blitz.blitz_name}** (${isActive ? "ACTIVE" : "ENDED"})`;
 
-      if (!rows.length) {
-        return msg.reply(`${title}\n(No appointments recorded for this blitz.)`);
-      }
+  if (!rows.length) {
+    return msg.reply(`${title}\n(No appointments recorded for this blitz.)`);
+  }
 
-      const byDate = new Map();
-      for (const r of rows) {
-        if (!byDate.has(r.date_key)) byDate.set(r.date_key, []);
-        byDate.get(r.date_key).push(r);
-      }
+  const byDate = new Map();
+  for (const r of rows) {
+    if (!byDate.has(r.date_key)) byDate.set(r.date_key, []);
+    byDate.get(r.date_key).push(r);
+  }
 
-      let out = `${title}\n`;
-      const dates = Array.from(byDate.keys()).sort();
+  const chunks = [];
+  let currentChunk = `${title}\n`;
+  const maxLen = 1900;
 
-      for (const dateKey of dates) {
-        const list = byDate
-          .get(dateKey)
-          .slice()
-          .sort((a, b) => (b.count || 0) - (a.count || 0));
+  const dates = Array.from(byDate.keys()).sort();
 
-        out += `\n**${dateKey} (CT)**\n`;
+  for (const dateKey of dates) {
+    const list = byDate
+      .get(dateKey)
+      .slice()
+      .sort((a, b) => (b.count || 0) - (a.count || 0));
 
-        for (let i = 0; i < list.length; i++) {
-          const r = list[i];
-          const name = await displayNameFor(msg.guild, r.user_id);
-          out += `${i + 1}. ${name} — ${r.count}\n`;
-          if (out.length > 1850) {
-            out += `\n…(truncated)\n`;
-            return msg.reply(out);
-          }
-        }
-      }
+    let section = `\n**${dateKey} (CT)**\n`;
 
-      return msg.reply(out.slice(0, 1900));
+    for (let i = 0; i < list.length; i++) {
+      const r = list[i];
+      const name = await displayNameFor(msg.guild, r.user_id);
+      section += `${i + 1}. ${name} — ${r.count}\n`;
     }
+
+    if ((currentChunk + section).length > maxLen) {
+      chunks.push(currentChunk.trimEnd());
+      currentChunk = section.trimStart();
+    } else {
+      currentChunk += section;
+    }
+  }
+
+  if (currentChunk.trim()) {
+    chunks.push(currentChunk.trimEnd());
+  }
+
+  await msg.reply(chunks[0]);
+
+  for (let i = 1; i < chunks.length; i++) {
+    await msg.channel.send(chunks[i]);
+  }
+
+  return;
+}
 
     if (command === "clearblitzappts") {
       if (!isLeadership(msg.member)) {
